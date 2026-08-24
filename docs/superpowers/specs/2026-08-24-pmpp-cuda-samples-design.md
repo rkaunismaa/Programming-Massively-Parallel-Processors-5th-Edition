@@ -23,8 +23,15 @@ not by fixed offset).
 - Only code that the chapter text actually presents or clearly specifies
   (named kernels, host drivers, data structures). End-of-chapter exercises
   are NOT implemented — those are reader assignments, not chapter content.
-- One self-contained CUDA repo, git-initialized, committed locally.
-  No GitHub remote is created (per user decision).
+- One self-contained CUDA repo, git-initialized, at
+  `pmpp-cuda-samples/`, living alongside (but never containing) the
+  source PDF — the PDF stays one directory up and is never added to
+  the git index.
+- Pushed to the GitHub remote the user created:
+  `git@github.com:rkaunismaa/Programming-Massively-Parallel-Processors-5th-Edition.git`,
+  branch `main`. Each chapter is its own commit, pushed right after it's
+  committed, so GitHub stays in sync incrementally rather than one big
+  push at the end.
 
 ## Chapter → PDF page map
 
@@ -177,6 +184,6 @@ don't share code beyond `common/cuda_utils.h`, which is written first.
 
 - End-of-chapter exercises.
 - Appendices A–C.
-- GitHub remote creation/push.
+- The source PDF itself — never committed to the repo.
 - Multi-GPU runtime environments not already installed (Ch 23 degrades
   gracefully per above).

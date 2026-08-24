@@ -18,7 +18,8 @@
 - Every `.cu` file must: generate its own test input, compute a CPU reference result, run the CUDA kernel(s), compare results (`nearlyEqual` for floats, exact for ints), and print `PASS`/`FAIL` plus a timing line. A task is not done until its binaries build clean and print `PASS` when run.
 - `#include "../../common/cuda_utils.h"` (relative path from a `ch##-*/` folder) in every `.cu` file for `CUDA_CHECK`, `nearlyEqual`, and `GpuTimer`.
 - No system-wide MPI/NCCL/NVSHMEM/cuDNN dev packages are installed on this machine (checked: only vendored copies inside unrelated Python venvs exist, which are not suitable to link against). Any sample needing them (Ch23 MPI/NCCL/NVSHMEM kernels, Ch19's optional cuDNN mention) is still written in full, but its Makefile target is guarded to skip the build with a printed message if the required header isn't found system-wide, and the chapter README states plainly that it wasn't compiled/run here.
-- Commit after each task with `git -C pmpp-cuda-samples add <paths> && git -C pmpp-cuda-samples -c user.email="kayintorob@yahoo.com" -c user.name="rob" commit -m "<message>"`.
+- The repo is pushed to `git@github.com:rkaunismaa/Programming-Massively-Parallel-Processors-5th-Edition.git` (remote `origin`, branch `main`, already set up). The source PDF lives one directory above the repo root and must never be added to the git index.
+- Commit after each task, then push immediately, with `git -C pmpp-cuda-samples add <paths> && git -C pmpp-cuda-samples -c user.email="kayintorob@yahoo.com" -c user.name="rob" commit -m "<message>" && git -C pmpp-cuda-samples push`. Each chapter is its own commit — never batch multiple chapters into one commit.
 
 ---
 
@@ -201,6 +202,7 @@ mkdir -p part1-fundamental-concepts part2-parallel-patterns part3-advanced-patte
 ```sh
 git add common README.md .gitignore
 git -c user.email="kayintorob@yahoo.com" -c user.name="rob" commit -m "Add shared CUDA utils header and top-level README"
+git push
 ```
 
 ---
@@ -240,7 +242,7 @@ code for it — do not pad the folder.
 - [ ] **Step 4:** `make -C part1-fundamental-concepts/ch02-heterogeneous-data-parallel-computing` — must succeed.
 - [ ] **Step 5:** `make -C part1-fundamental-concepts/ch02-heterogeneous-data-parallel-computing run` — must print PASS.
 - [ ] **Step 6:** Write `README.md` (template), commit:
-  `git add part1-fundamental-concepts/ch02-heterogeneous-data-parallel-computing && git commit -m "Add Ch2 vector addition sample"`
+  `git add part1-fundamental-concepts/ch02-heterogeneous-data-parallel-computing && git commit -m "Add Ch2 vector addition sample" && git push`
 
 ---
 
@@ -658,7 +660,7 @@ clean:
 - [ ] **Step 2:** If the chapter contains at least one concrete, distinct code listing (e.g., a batching-vs-single-request throughput comparison for §22.5, or a decomposition example), create `part3-advanced-patterns-and-applications/ch22-algorithm-selection-and-problem-decomposition/0N_<name>.cu` implementing it, self-contained per the Global Constraints (own CPU reference/expected behavior, PASS/FAIL, timing where relevant).
 - [ ] **Step 3:** If the chapter is entirely conceptual with no distinct runnable listing, do not create any `.cu` file. Instead create only `part3-advanced-patterns-and-applications/ch22-algorithm-selection-and-problem-decomposition/README.md` summarizing the chapter's design principles (algorithm selection criteria, decomposition strategies, Amdahl's law application, problem formulation, batching trade-offs) in your own words, with a note explaining why no code sample was added.
 - [ ] **Step 4:** If any `.cu` files were created, write a `Makefile` (standard template) and run `make -C part3-advanced-patterns-and-applications/ch22-algorithm-selection-and-problem-decomposition run`, confirming PASS.
-- [ ] **Step 5:** Commit: `git add part3-advanced-patterns-and-applications/ch22-algorithm-selection-and-problem-decomposition && git commit -m "Add Ch22 algorithm selection notes"` (message becomes `"...samples"` if code was added).
+- [ ] **Step 5:** Commit: `git add part3-advanced-patterns-and-applications/ch22-algorithm-selection-and-problem-decomposition && git commit -m "Add Ch22 algorithm selection notes" && git push` (message becomes `"...samples"` if code was added).
 
 ---
 
