@@ -1,5 +1,7 @@
 # PMPP CUDA Samples
 
+![Programming Massively Parallel Processors, 5th Edition cover](Programming_Massively_Parallel_Processors_5E_-_Wen-mei_W_Hwu.jpg)
+
 Unofficial, hand-written CUDA C++ code samples for every code-bearing
 chapter (2–23) of *Programming Massively Parallel Processors: A
 Hands-on Approach*, 5th Edition (Hwu, Kirk, El Hajj). The book does not
