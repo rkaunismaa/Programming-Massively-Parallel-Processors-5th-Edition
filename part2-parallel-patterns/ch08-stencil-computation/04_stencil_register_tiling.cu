@@ -32,7 +32,7 @@
 //
 // The result: shared-memory consumption per block drops to 1/3 of file
 // 03's (one t^2 plane instead of three, e.g. 4 KB vs 12 KB at t=32), paid
-// for by 2 extra registers per thread (3072 more registers per 32x32
+// for by 3 extra registers per thread (3072 more registers per 32x32
 // block, per §8.6). Global memory traffic and overall data reuse are
 // unchanged versus file 03 -- register tiling only redistributes where
 // the *on-chip* reuse happens, so this optimization does not by itself

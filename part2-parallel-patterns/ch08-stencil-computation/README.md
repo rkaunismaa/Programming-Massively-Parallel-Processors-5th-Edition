@@ -117,7 +117,7 @@ register reads.
 This is a genuinely different technique from files 02 and 03, not a
 cosmetic rename: it keeps only **one** `t^2` plane in shared memory instead
 of three, dropping shared-memory use per block to 1/3 of file 03's (4 KB vs.
-12 KB at `t=32`, matching §8.6's own numbers), at the cost of 2 extra
+12 KB at `t=32`, matching §8.6's own numbers), at the cost of 3 extra
 registers per thread. Global memory traffic and total data reuse are
 unchanged from file 03 — §8.6 notes register tiling only redistributes
 *where* on-chip reuse happens, it does not further reduce DRAM bandwidth
