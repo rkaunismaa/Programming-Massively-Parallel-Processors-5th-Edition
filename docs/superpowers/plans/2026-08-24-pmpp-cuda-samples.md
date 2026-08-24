@@ -299,7 +299,7 @@ code for it — do not pad the folder.
 ### Task 5: Chapter 6 — Performance considerations (has the sm_80 exception)
 
 **Files:**
-- Create: `part2.../ch06-performance-considerations/01_coalesced_vs_uncoalesced_access.cu` (§6.1)
+- Create: `part1-fundamental-concepts/ch06-performance-considerations/01_coalesced_vs_uncoalesced_access.cu` (§6.1)
 - Create: `.../02_vectorized_loads_float4.cu` (§6.3)
 - Create: `.../03_shared_memory_bank_conflicts.cu` (§6.4)
 - Create: `.../04_thread_coarsening.cu` (§6.5)
