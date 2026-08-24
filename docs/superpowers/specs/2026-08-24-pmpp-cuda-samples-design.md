@@ -133,14 +133,26 @@ book presents each chapter's code as self-contained listings.
 
 ## Build & verification
 
-- Target architecture: `-arch=sm_75` (compatible with both local GPUs:
-  RTX 2070 SUPER sm_75, RTX 4090 sm_89).
+- Default target architecture: `-arch=sm_75` (compatible with both local
+  GPUs: RTX 2070 SUPER sm_75, RTX 4090 sm_89). Used for every sample
+  unless noted below.
+- **Exception — `cp.async`/`cuda::memcpy_async` samples**: Ch6.7 (double
+  buffering) and Ch15.8 (software pipelining) rely on Ampere+ async-copy
+  instructions, which require **sm_80+** and do not run on the 2070
+  SUPER (sm_75). Rather than water these down to a manual, non-async
+  fallback, those specific `.cu` files are compiled with `-arch=sm_80`
+  (own `Makefile` target/variable), implement the real async-copy version
+  as the book describes it, and their chapter README notes that they only
+  run on sm_80+ GPUs (verified on the 4090 here). Everything else in
+  those two chapters still targets sm_75.
 - Every `.cu` file is compiled and actually run against its CPU reference
-  as part of writing it. A sample is not considered done until it builds
-  clean and its correctness check passes on real hardware.
+  as part of writing it (async-copy files run on the 4090 specifically).
+  A sample is not considered done until it builds clean and its
+  correctness check passes on real hardware.
 - Top-level `README.md` documents prerequisites (CUDA Toolkit 12.6+,
-  `make`) and how to build all chapters (`make -C <chapter-dir>`) or a
-  single chapter.
+  `make`, and — for the two sm_80+ samples — a GPU with compute
+  capability ≥ 8.0) and how to build all chapters (`make -C
+  <chapter-dir>`) or a single chapter.
 
 ## Execution plan
 
