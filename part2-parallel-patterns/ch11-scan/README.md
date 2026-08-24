@@ -135,12 +135,12 @@ assuming register tiling implies fewer registers.
 §11.9 surveys three inter-block-scan strategies and derives their global
 memory traffic (`N` = total elements, `S` = elements/block segment):
 
-- **Three-kernel scan-scan-add**: `(4 + 8/S)*N` bytes, `~16 B/element` for
+- **Three-kernel scan-scan-add**: `(16 + 8/S)*N` bytes, `~16 B/element` for
   large `S` -- half the ideal peak of `419*10^9 elements/s` the book derives
   in §11.8 for an H100 (`3.35 TB/s` bandwidth / `8 B/element` minimum
   traffic), "because it performs twice the number of global memory accesses
   due to the need to store all N intermediate values."
-- **Three-kernel reduce-scan-scan**: `(3 + 3/S)*N` bytes, `~12 B/element` --
+- **Three-kernel reduce-scan-scan**: `(12 + 12/S)*N` bytes, `~12 B/element` --
   better (`2/3` of ideal peak, `279*10^9 elements/s`), by replacing the
   first kernel's per-element scan output with a per-block reduction output.
 - **Single-kernel with an in-kernel inter-block scan** (Figs. 11.16-11.18):

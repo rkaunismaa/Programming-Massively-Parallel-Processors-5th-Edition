@@ -13,13 +13,13 @@
 //
 //   1. Three-kernel scan-scan-add (naive): local scan / scan of block sums
 //      / add pass, as three separate kernel launches. §11.9 derives its
-//      exact traffic: (4 + 8/S)*N bytes for segment size S, ~16 B/element
+//      exact traffic: (16 + 8/S)*N bytes for segment size S, ~16 B/element
 //      for large S -- half the peak 419e9 elements/s the book calculates in
 //      §11.8 for an ideal (H100) scan, because the N intermediate scanned
 //      values are written out and read back an extra time.
 //   2. Three-kernel reduce-scan-scan: replaces the first kernel's local
 //      SCAN with a REDUCTION (fewer writes: N/S values instead of N), for
-//      (3 + 3/S)*N bytes, ~12 B/element -- better, but still loads the
+//      (12 + 12/S)*N bytes, ~12 B/element -- better, but still loads the
 //      input from global memory twice overall.
 //   3. Single-kernel, in-kernel inter-block scan via SINGLE LOOKBACK
 //      (Fig. 11.16(b), Fig. 11.17, Fig. 11.18) -- the one implemented here.
