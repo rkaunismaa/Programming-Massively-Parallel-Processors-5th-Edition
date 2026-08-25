@@ -97,12 +97,13 @@ __global__ void initGridKernel(float* grid, int nx, int nyLocal) {
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
     if (ix < nx && iy < nyLocal) {
-        // x=0/x=nx-1 held at 0 (true, non-decomposed Dirichlet edges);
-        // everything else initialized to 0. Since the multi-rank domain is
-        // periodic in y (see file header), there is no single "hot" edge
-        // as in file 01 -- this is purely an illustrative initial
-        // condition, never exercised on this machine.
-        grid[iy * nx + ix] = 0.0f;
+        // The multi-rank domain is periodic in y (see file header), so
+        // there is no single "hot" y-edge as in file 01. x=0/x=nx-1 remain
+        // true, non-decomposed Dirichlet edges in every file since the book
+        // never decomposes along x, so we drive the problem from a
+        // Dirichlet edge at x=0 (analogous to file 01's y=0 edge) instead;
+        // everything else is initialized to 0.
+        grid[iy * nx + ix] = (ix == 0) ? 1.0f : 0.0f;
     }
 }
 

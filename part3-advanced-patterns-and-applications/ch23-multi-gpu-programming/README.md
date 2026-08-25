@@ -107,7 +107,14 @@ there is no true global top/bottom Dirichlet edge in this or any of
 `03`-`05`, unlike file 01's single-GPU baseline (which has no ranks at all
 and thus a genuine fixed top/bottom edge). The x-dimension is never
 decomposed in the book, so `x=0`/`x=nx-1` remain true, non-periodic
-Dirichlet edges in every file, consistent with file 01.
+Dirichlet edges in every file, consistent with file 01. Since the
+y-topology is periodic and has no edge of its own, `02`-`05` all drive the
+problem from the x-edge instead: `initGridKernel` sets `x=0` to `1.0`
+(everything else, including `x=nx-1`, to `0.0`) -- the direct analog of
+file 01's `y=0` edge, applied to the one axis that still has a true edge
+in these files. Neither boundary column is ever written by the Jacobi
+kernel (whose update only touches `0 < ix < nx-1`), so both stay fixed for
+the life of the run, exactly like file 01's Dirichlet edges.
 
 **Confidence:** high. §23.2's prose describes essentially every line of
 Fig. 23.5-23.11 (the five bootstrap MPI calls, the `MPI_Send`/`MPI_Recv`/
@@ -137,16 +144,23 @@ priority) --
 Together these cover exactly the same rows as `02`'s single launch, with no
 overlap and no gap. `cudaEvent`s (`cudaEventCreateWithFlags(...,
 cudaEventDisableTiming)`) order the L2-norm reset before the boundary
-kernels (`resetL2`) and order the final `cudaMemcpyAsync` of the L2 norm
-after both boundary kernels finish (`topDone`/`bottomDone`), matching
-§23.3's description of `cudaStreamWaitEvent`/`cudaEventRecord` usage. The
-host still calls `cudaStreamSynchronize` on `topStream`/`bottomStream`
-before each `MPI_Sendrecv` (since plain `MPI_Sendrecv` cannot be placed
-inside a CUDA stream) -- while that happens, the internal kernel (never
-synchronized on) can continue running concurrently, which is the overlap
-the section demonstrates. `l2norm_h` is allocated with `cudaMallocHost`
-(pinned memory), required because it is the target of `cudaMemcpyAsync`,
-per §23.3's closing discussion of pinned memory and DMA.
+kernels (`resetL2`) and order the L2-norm `cudaMemcpyAsync` (device to
+pinned host memory, in `internalStream`) after both boundary kernels finish
+(`topDone`/`bottomDone`), matching §23.3's description of
+`cudaStreamWaitEvent`/`cudaEventRecord` usage. Per §23.3's explicitly
+stated optimization ("we can use cudaMemcpyAsync to insert the memory copy
+of the l2norm from the global memory to the host memory before the calls
+to MPI_Sendrecv... Doing so overlaps the memory copy from the GPU to the
+host CPU with the network communication"), this `cudaMemcpyAsync` is issued
+*before* the two `MPI_Sendrecv` calls, not after -- since it is
+non-blocking, the host proceeds immediately to `cudaStreamSynchronize` on
+`topStream`/`bottomStream` and the two blocking `MPI_Sendrecv` calls while
+the D2H copy (and the internal kernel, never synchronized on until the very
+end) can still be in flight. A final `cudaStreamSynchronize(internalStream)`
+after both `MPI_Sendrecv` calls ensures the copy has completed before
+`l2norm_h` is read for `MPI_Allreduce`. `l2norm_h` is allocated with
+`cudaMallocHost` (pinned memory), required because it is the target of
+`cudaMemcpyAsync`, per §23.3's closing discussion of pinned memory and DMA.
 
 **Confidence:** high for the stream/event/kernel-split structure (§23.3's
 prose walks through Fig. 23.14 in detail, including exact row offsets and
@@ -203,6 +217,11 @@ should double-check argument order and `ncclDataType_t`/`ncclComm_t`
 usage against the installed `nccl.h`.
 
 ## §23.5 -- `05_stencil_multigpu_nvshmem.cu` (not compiled here)
+
+Note: because `nvshmem_float_p` is called from device code, building this
+file for real (unlike `02`-`04`) requires relocatable device code and
+linking against the NVSHMEM device runtime, e.g. `nvcc -rdc=true
+-lnvshmem_host -lnvshmem_device` (or `-lnvshmem`).
 
 Halo exchange via NVSHMEM one-sided put, per Fig. 23.22-23.25:
 

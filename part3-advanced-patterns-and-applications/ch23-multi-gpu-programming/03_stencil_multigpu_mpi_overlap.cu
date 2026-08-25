@@ -85,7 +85,13 @@ __global__ void initGridKernel(float* grid, int nx, int nyLocal) {
     int ix = blockIdx.x * blockDim.x + threadIdx.x;
     int iy = blockIdx.y * blockDim.y + threadIdx.y;
     if (ix < nx && iy < nyLocal) {
-        grid[iy * nx + ix] = 0.0f;
+        // The y-topology across ranks is periodic (wrap-around, per §23.2),
+        // so there is no true global top/bottom Dirichlet edge here, unlike
+        // file 01. x=0/x=nx-1 remain true non-periodic edges in every file
+        // since the book never decomposes along x, so we drive the problem
+        // from a Dirichlet edge at x=0 instead (analogous to file 01's
+        // y=0 edge), matching file 01's ny==0-edge value of 1.0f.
+        grid[iy * nx + ix] = (ix == 0) ? 1.0f : 0.0f;
     }
 }
 
@@ -195,6 +201,29 @@ int main(int argc, char** argv) {
         // check computes rows 2..nyLocal-3 relative to the full slab.
         launchJacobiKernel(d_output + nx, d_input + nx, nx, nyLocal - 2, d_l2normSq, internalStream);
 
+        // Fig. 23.14 lines 19-20: internalStream waits for both boundary
+        // kernels before copying the (now complete) L2 norm sum to the
+        // host, so the copy reflects all three kernels' contributions.
+        CUDA_CHECK(cudaStreamWaitEvent(internalStream, topDone, 0));
+        CUDA_CHECK(cudaStreamWaitEvent(internalStream, bottomDone, 0));
+
+        // Fig. 23.14 line 21: non-blocking copy of the L2 norm square to
+        // pinned host memory, inserted into internalStream *before* the
+        // MPI_Sendrecv calls below. Per §23.3: "One further optimization
+        // applied to our host code..., based on the fact that
+        // cudaMemcpyAsync is non-blocking, is that we can use
+        // cudaMemcpyAsync to insert the memory copy of the l2norm from
+        // the global memory to the host memory before the calls to
+        // MPI_Sendrecv... Doing so overlaps the memory copy from the GPU
+        // to the host CPU with the network communication performing the
+        // halo exchange if the kernel computing the internal grid points
+        // finishes before the halo exchange does." I.e. the overlap is
+        // between this D2H copy (once its stream prerequisites are met)
+        // and the two host-blocking MPI_Sendrecv calls below, not with
+        // any halo exchange that has already happened -- there is none
+        // yet at this point.
+        CUDA_CHECK(cudaMemcpyAsync(l2norm_h, d_l2normSq, sizeof(float), cudaMemcpyDeviceToHost, internalStream));
+
         // Fig. 23.14 line 27: host waits for the top-boundary kernel to
         // finish before initiating its halo exchange.
         CUDA_CHECK(cudaStreamSynchronize(topStream));
@@ -204,28 +233,17 @@ int main(int argc, char** argv) {
 
         // Fig. 23.14 line 32: host waits for the bottom-boundary kernel to
         // finish before initiating its halo exchange. Meanwhile the
-        // internal kernel (in internalStream, never synchronized on here)
-        // may already be running concurrently with the halo exchanges
-        // above -- this is the overlap the section is about.
+        // internal kernel (in internalStream) and the cudaMemcpyAsync
+        // queued above may already be running/completing concurrently
+        // with these two blocking MPI_Sendrecv calls -- this is the
+        // overlap the section is about.
         CUDA_CHECK(cudaStreamSynchronize(bottomStream));
         MPI_Sendrecv(d_output + (nyLocal - 2) * nx, nx, MPI_FLOAT, bottomNeighbor, 1,
                      d_output, nx, MPI_FLOAT, topNeighbor, 1,
                      MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-        // Fig. 23.14 lines 19-20: internalStream waits for both boundary
-        // kernels before copying the (now complete) L2 norm sum to the
-        // host, so the copy reflects all three kernels' contributions.
-        CUDA_CHECK(cudaStreamWaitEvent(internalStream, topDone, 0));
-        CUDA_CHECK(cudaStreamWaitEvent(internalStream, bottomDone, 0));
-
-        // Fig. 23.14 line 21: non-blocking copy of the L2 norm square to
-        // pinned host memory, inserted into internalStream so it overlaps
-        // with the halo exchanges above whenever the internal kernel
-        // finishes before they do.
-        CUDA_CHECK(cudaMemcpyAsync(l2norm_h, d_l2normSq, sizeof(float), cudaMemcpyDeviceToHost, internalStream));
-
-        // Fig. 23.14 line 37: host must wait for that copy to complete
-        // before using l2norm_h in MPI_Allreduce.
+        // Fig. 23.14 line 37: host must wait for the cudaMemcpyAsync
+        // above to complete before using l2norm_h in MPI_Allreduce.
         CUDA_CHECK(cudaStreamSynchronize(internalStream));
 
         float l2normSumSq_h = 0.0f;
