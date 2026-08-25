@@ -53,6 +53,21 @@
 
 #include "../../common/cuda_utils.h"
 
+// Modeled directly on 04_stencil_multigpu_nccl.cu's NCCL_CHECK: checks an
+// MPI call's int return code against MPI_SUCCESS, prints an error, and
+// aborts the whole MPI job on failure (MPI_Abort rather than exit(), since
+// a bare exit() on one rank can hang the other ranks waiting in a
+// collective call).
+#define MPI_CHECK(call)                                                       \
+    do {                                                                       \
+        int err__ = (call);                                                    \
+        if (err__ != MPI_SUCCESS) {                                            \
+            fprintf(stderr, "MPI error at %s:%d: code %d\n", __FILE__, __LINE__, \
+                    err__);                                                    \
+            MPI_Abort(MPI_COMM_WORLD, err__);                                  \
+        }                                                                       \
+    } while (0)
+
 // ---------------------------------------------------------------------
 // Same generalized Jacobi kernel as 01_stencil_singlegpu_baseline.cu:
 // computes rows [1, numRows-2] of a `numRows`-row span, treating row 0 and
@@ -107,12 +122,63 @@ __global__ void initGridKernel(float* grid, int nx, int nyLocal) {
     }
 }
 
+// ---------------------------------------------------------------------
+// Independent CPU reference: ported from 01_stencil_singlegpu_baseline.cu's
+// cpuJacobiReference, adapted for this file's global topology instead of
+// file 01's single-GPU one -- the same Jacobi relaxation run over the
+// *whole* nx x nyTotal grid (nyTotal = nyTotalInterior, the sum of every
+// rank's local interior rows), with the y-dimension treated as periodic
+// (a torus, matching the wrap-around rank topology described in the file
+// header) and x=0/x=nx-1 held at the same fixed Dirichlet values as
+// initGridKernel above. Double precision, run for the identical number of
+// iterations as the GPU loop below.
+// ---------------------------------------------------------------------
+static void cpuJacobiReferenceGlobal(std::vector<double>& result, int nx, int nyTotal,
+                                      int maxIters, double tol, int* itersUsed,
+                                      double* finalNorm) {
+    std::vector<double> a(static_cast<size_t>(nx) * nyTotal);
+    std::vector<double> b(static_cast<size_t>(nx) * nyTotal);
+    for (int iy = 0; iy < nyTotal; ++iy) {
+        for (int ix = 0; ix < nx; ++ix) {
+            a[iy * nx + ix] = (ix == 0) ? 1.0 : 0.0;
+        }
+    }
+    b = a;
+
+    double* cur = a.data();
+    double* nxt = b.data();
+    int iter = 0;
+    double norm = 1e300;
+    while (iter < maxIters && norm > tol) {
+        double sumSq = 0.0;
+        for (int iy = 0; iy < nyTotal; ++iy) {
+            int iyUp = (iy - 1 + nyTotal) % nyTotal;
+            int iyDown = (iy + 1) % nyTotal;
+            for (int ix = 1; ix < nx - 1; ++ix) {
+                int idx = iy * nx + ix;
+                double newVal = 0.25 * (cur[idx - 1] + cur[idx + 1] +
+                                         cur[iyUp * nx + ix] + cur[iyDown * nx + ix]);
+                nxt[idx] = newVal;
+                double residue = newVal - cur[idx];
+                sumSq += residue * residue;
+            }
+        }
+        norm = std::sqrt(sumSq);
+        std::swap(cur, nxt);
+        ++iter;
+    }
+
+    result.assign(cur, cur + static_cast<size_t>(nx) * nyTotal);
+    *itersUsed = iter;
+    *finalNorm = norm;
+}
+
 int main(int argc, char** argv) {
-    MPI_Init(&argc, &argv);
+    MPI_CHECK(MPI_Init(&argc, &argv));
 
     int rank = 0, numRanks = 1;
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &numRanks);
+    MPI_CHECK(MPI_Comm_rank(MPI_COMM_WORLD, &rank));
+    MPI_CHECK(MPI_Comm_size(MPI_COMM_WORLD, &numRanks));
 
     // One GPU per rank (assumes numRanks <= number of visible GPUs on the
     // node, or a launcher that has already restricted CUDA_VISIBLE_DEVICES
@@ -120,11 +186,23 @@ int main(int argc, char** argv) {
     // patterns; the book does not dictate one over the other).
     int deviceCount = 0;
     CUDA_CHECK(cudaGetDeviceCount(&deviceCount));
+    if (deviceCount == 0) {
+        fprintf(stderr, "Rank %d: no CUDA devices visible (cudaGetDeviceCount "
+                         "returned 0); check CUDA_VISIBLE_DEVICES\n", rank);
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
     CUDA_CHECK(cudaSetDevice(rank % deviceCount));
 
     // Global grid: nx columns, nyTotal rows, decomposed along y only.
     const int nx = 130;
     const int nyTotalInterior = 512;  // must be divisible by numRanks
+    if (nyTotalInterior % numRanks != 0) {
+        if (rank == 0) {
+            fprintf(stderr, "Error: nyTotalInterior (%d) must be divisible by "
+                             "numRanks (%d)\n", nyTotalInterior, numRanks);
+        }
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
     const int nyLocalInterior = nyTotalInterior / numRanks;
     const int nyLocal = nyLocalInterior + 2;  // + top halo row + bottom halo row
 
@@ -151,6 +229,9 @@ int main(int argc, char** argv) {
     int topNeighbor = (rank == 0) ? (numRanks - 1) : (rank - 1);
     int bottomNeighbor = (rank == numRanks - 1) ? 0 : (rank + 1);
 
+    GpuTimer timer;
+    timer.start();
+
     int iter = 0;
     float l2norm = 1e30f;
     while (iter < maxIters && l2norm > tol) {
@@ -173,16 +254,16 @@ int main(int argc, char** argv) {
         // First MPI_Sendrecv: send my new top boundary row (row 1) to my
         // top neighbor; receive my bottom halo row (row nyLocal-1) from my
         // bottom neighbor.
-        MPI_Sendrecv(d_output + 1 * nx, nx, MPI_FLOAT, topNeighbor, 0,
-                     d_output + (nyLocal - 1) * nx, nx, MPI_FLOAT, bottomNeighbor, 0,
-                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_CHECK(MPI_Sendrecv(d_output + 1 * nx, nx, MPI_FLOAT, topNeighbor, 0,
+                               d_output + (nyLocal - 1) * nx, nx, MPI_FLOAT, bottomNeighbor, 0,
+                               MPI_COMM_WORLD, MPI_STATUS_IGNORE));
 
         // Second MPI_Sendrecv: send my new bottom boundary row
         // (row nyLocal-2) to my bottom neighbor; receive my top halo row
         // (row 0) from my top neighbor.
-        MPI_Sendrecv(d_output + (nyLocal - 2) * nx, nx, MPI_FLOAT, bottomNeighbor, 1,
-                     d_output, nx, MPI_FLOAT, topNeighbor, 1,
-                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        MPI_CHECK(MPI_Sendrecv(d_output + (nyLocal - 2) * nx, nx, MPI_FLOAT, bottomNeighbor, 1,
+                               d_output, nx, MPI_FLOAT, topNeighbor, 1,
+                               MPI_COMM_WORLD, MPI_STATUS_IGNORE));
 
         // Fig. 23.7 lines 20-25, Fig. 23.11: copy this rank's partial L2
         // norm square to the host, then MPI_Allreduce (MPI_SUM) across all
@@ -192,7 +273,7 @@ int main(int argc, char** argv) {
         float l2normSq_h = 0.0f;
         CUDA_CHECK(cudaMemcpy(&l2normSq_h, d_l2normSq, sizeof(float), cudaMemcpyDeviceToHost));
         float l2normSumSq_h = 0.0f;
-        MPI_Allreduce(&l2normSq_h, &l2normSumSq_h, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_CHECK(MPI_Allreduce(&l2normSq_h, &l2normSumSq_h, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD));
         l2norm = std::sqrt(l2normSumSq_h);
 
         // Fig. 23.7 line 27: double-buffer swap.
@@ -203,16 +284,61 @@ int main(int argc, char** argv) {
             printf("iter %d: l2norm = %.6e\n", iter, l2norm);
         }
     }
+    CUDA_CHECK(cudaDeviceSynchronize());
+    float gpuMs = timer.stopAndGetMs();
 
+    // Gather each rank's final local interior slab (rows 1..nyLocal-2,
+    // excluding the two halo rows) from device to host, then MPI_Gather
+    // them all into one global nx x nyTotalInterior buffer on rank 0. This
+    // is a collective call, so every rank must issue it (not just rank 0),
+    // even though only rank 0 uses the assembled result.
+    std::vector<float> localInterior(static_cast<size_t>(nx) * nyLocalInterior);
+    CUDA_CHECK(cudaMemcpy(localInterior.data(), d_input + nx,
+                           localInterior.size() * sizeof(float), cudaMemcpyDeviceToHost));
+
+    std::vector<float> globalResult;
     if (rank == 0) {
-        printf("Rank 0: finished after %d iterations, final L2 norm = %.6e\n", iter, l2norm);
-        printf("(not executed on this machine -- see README)\n");
+        globalResult.resize(static_cast<size_t>(nx) * nyTotalInterior);
+    }
+    MPI_CHECK(MPI_Gather(localInterior.data(), nx * nyLocalInterior, MPI_FLOAT,
+                         rank == 0 ? globalResult.data() : nullptr,
+                         nx * nyLocalInterior, MPI_FLOAT, 0, MPI_COMM_WORLD));
+
+    int exitCode = 0;
+    if (rank == 0) {
+        std::vector<double> cpuResult;
+        int cpuIters = 0;
+        double cpuNorm = 0.0;
+        cpuJacobiReferenceGlobal(cpuResult, nx, nyTotalInterior, maxIters,
+                                  static_cast<double>(tol), &cpuIters, &cpuNorm);
+
+        bool pass = true;
+        double maxDiff = 0.0;
+        for (size_t i = 0; i < globalResult.size(); ++i) {
+            double diff = std::fabs(static_cast<double>(globalResult[i]) - cpuResult[i]);
+            maxDiff = std::max(maxDiff, diff);
+            if (!nearlyEqual(globalResult[i], static_cast<float>(cpuResult[i]))) {
+                pass = false;
+            }
+        }
+
+        printf("Global grid: %dx%d across %d rank(s) (interior %dx%d)\n", nx,
+               nyTotalInterior, numRanks, nx - 2, nyTotalInterior);
+        printf("GPU: %d iterations, final L2 norm = %.6e\n", iter, l2norm);
+        printf("CPU: %d iterations, final L2 norm = %.6e\n", cpuIters, cpuNorm);
+        printf("Max |GPU - CPU| = %.6e\n", maxDiff);
+        printf("GPU time: %.3f ms (%d iterations)\n", gpuMs, iter);
+        printf("%s\n", pass ? "PASS" : "FAIL");
+        // Not executed on this machine (no system-wide MPI dev package
+        // installed here -- see the file header and README): the verdict
+        // above is what this comparison would print if run for real.
+        exitCode = pass ? 0 : 1;
     }
 
     CUDA_CHECK(cudaFree(d_input));
     CUDA_CHECK(cudaFree(d_output));
     CUDA_CHECK(cudaFree(d_l2normSq));
 
-    MPI_Finalize();
-    return 0;
+    MPI_CHECK(MPI_Finalize());
+    return exitCode;
 }

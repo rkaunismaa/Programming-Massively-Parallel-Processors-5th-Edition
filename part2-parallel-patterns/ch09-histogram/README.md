@@ -146,6 +146,15 @@ shared-warm-up-vs-cold-kernel bias between them:
 | `03_histogram_coarsened` | 0.023 ms | ~33x faster |
 | `04_histogram_thread_level_privatization` | 0.022 ms | ~35x faster |
 
+**Build mode:** this chapter's Makefile predates the repo-wide `DEBUG ?= 1`
+toggle added later (commit `4596ee2`), so at the time these numbers were
+measured `make run` always produced an optimized `-O2` build -- equivalent
+to today's `make DEBUG=0 run`. Since `DEBUG=1` (`-O0 -g -G`) is now the
+*default* `make run` behavior repo-wide, reproducing this table requires
+`make DEBUG=0 run`; a plain `make run` today will be markedly slower due to
+the `-G` device-debug-info penalty, not a regression in the kernels
+themselves.
+
 This ordering matches the book's narrative: privatization gives the single
 largest jump (moving almost all contention off the device-scope public
 histogram and onto much-lower-latency shared memory), coarsening adds a
