@@ -25,6 +25,27 @@
 // grid.num_threads()) instead of the "one thread per frontier element"
 // mapping used in 03/04_bfs_frontier*.cu.
 //
+// Per the book's own description of Fig. 18.17 (§18.7): "Most of the body
+// of this loop ... resembles the frontier-based kernel from Fig. 18.15
+// [the PRIVATIZED, block-local-shared-memory frontier construction that
+// 04_bfs_frontier_privatized.cu implements], which reads the vertices in
+// the previous frontier, iterates over their neighbors, and atomically
+// visits the unvisited neighbors while inserting them into the current
+// frontier. The main difference from the code in Fig. 18.15 is that ... a
+// single thread may have to handle multiple vertices [the grid-stride loop
+// above]." So this kernel is file 04's privatization technique (each block
+// first accumulates its discoveries into a small shared-memory frontier
+// with a block-local shared counter, with the same overflow fallback to
+// the public frontier if a block's private frontier fills up, then one
+// thread reserves a contiguous range in the public frontier and the block
+// copies its private frontier in with coalesced writes) PLUS the
+// grid-stride loop, not file 03's plain global-atomic technique plus a
+// grid-stride loop. The block-local shared state is reset once per BFS
+// level (not per grid-stride chunk), so a block's private frontier
+// accumulates discoveries across every chunk of the previous frontier it
+// processes during that level and is flushed to the public frontier once,
+// after the grid-stride loop for that level completes.
+//
 // cudaDeviceGetAttribute(cudaDevAttrCooperativeLaunch, ...) is checked
 // first and the program exits 0 with a clear skip message (not a FAIL) if
 // the device doesn't support cooperative grid launch -- defensive code for
@@ -44,6 +65,7 @@
 namespace cg = cooperative_groups;
 
 const int UNVISITED = INT_MAX;
+const int LOCAL_FRONTIER_CAPACITY = 32;
 
 // ---------------------------------------------------------------------------
 // §18.5, Fig. 18.14: same atomic check-and-label device function used by
@@ -58,7 +80,13 @@ __device__ bool visitVertexAtomically(int *level, int vertex, int currLevel) {
 // ---------------------------------------------------------------------------
 // §18.7, Fig. 18.17: single-launch, multi-level BFS kernel. Iterates over
 // levels internally, using grid.sync() as the barrier between levels
-// instead of a host-side kernel relaunch.
+// instead of a host-side kernel relaunch. Per the book text quoted above,
+// the neighbor-discovery step (Fig. 18.15's privatized, block-local
+// frontier construction, same mechanism as
+// 04_bfs_frontier_privatized.cu's bfsFrontierPrivatizedKernel) is combined
+// here with a grid-stride loop over the previous frontier's elements,
+// since cooperative launch caps the block/thread count via occupancy
+// rather than sizing it to the frontier as files 03/04 do.
 //
 // numPrevFrontier is passed BY VALUE (every thread starts with the same
 // initial frontier size and keeps its own up-to-date copy in a register,
@@ -68,18 +96,51 @@ __device__ bool visitVertexAtomically(int *level, int vertex, int currLevel) {
 // ---------------------------------------------------------------------------
 __global__ void bfsCoopKernel(const int *srcPtrs, const int *dst, int *level, int *prevFrontier, int *currFrontier, int numPrevFrontier, int *numCurrFrontier) {
     cg::grid_group grid = cg::this_grid();
+
+    __shared__ int currFrontier_s[LOCAL_FRONTIER_CAPACITY];
+    __shared__ int numCurrFrontier_s;
+    __shared__ int currFrontierStartIdx;
+
     int currLevel = 1;
 
     while (numPrevFrontier > 0) {
-        for (int i = grid.thread_rank(); i < numPrevFrontier; i += grid.num_threads()) {
+        if (threadIdx.x == 0) {
+            numCurrFrontier_s = 0;
+        }
+        __syncthreads();
+
+        // Fig. 18.15/18.17: block-local privatized frontier construction,
+        // grid-strided across every chunk of the previous frontier this
+        // block is responsible for at this level.
+        for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < numPrevFrontier; i += grid.num_threads()) {
             int vertex = prevFrontier[i];
             for (int edge = srcPtrs[vertex]; edge < srcPtrs[vertex + 1]; ++edge) {
                 int neighbor = dst[edge];
                 if (visitVertexAtomically(level, neighbor, currLevel)) {
-                    int currFrontierIdx = atomicAdd(numCurrFrontier, 1);
-                    currFrontier[currFrontierIdx] = neighbor;
+                    int currFrontierIdx_s = atomicAdd(&numCurrFrontier_s, 1);
+                    if (currFrontierIdx_s < LOCAL_FRONTIER_CAPACITY) {
+                        currFrontier_s[currFrontierIdx_s] = neighbor;
+                    } else {
+                        numCurrFrontier_s = LOCAL_FRONTIER_CAPACITY;
+                        int currFrontierIdx = atomicAdd(numCurrFrontier, 1);
+                        currFrontier[currFrontierIdx] = neighbor;
+                    }
                 }
             }
+        }
+        __syncthreads();
+
+        // Flush this block's private frontier to the public one exactly
+        // once per level (after the grid-stride loop above has finished
+        // accumulating every chunk this block owns), same as
+        // 04_bfs_frontier_privatized.cu.
+        if (threadIdx.x == 0) {
+            currFrontierStartIdx = atomicAdd(numCurrFrontier, numCurrFrontier_s);
+        }
+        __syncthreads();
+
+        for (int c = threadIdx.x; c < numCurrFrontier_s; c += blockDim.x) {
+            currFrontier[currFrontierStartIdx + c] = currFrontier_s[c];
         }
 
         grid.sync();

@@ -119,10 +119,31 @@ and launches exactly that many blocks -- no more -- through
 `cudaLaunchCooperativeKernel()`, which requires packing kernel arguments
 into a `void*[]` array rather than using `<<<...>>>` syntax. Because the
 grid can now have fewer threads than there are frontier vertices, each
-thread processes a grid-stride loop of frontier elements
-(`grid.thread_rank()`/`grid.num_threads()`) instead of the strict
-one-thread-per-element mapping files 03/04 use. Per §18.7's kernel
-argument list -- `numPrevFrontier` (no `_d` suffix) alongside
+block processes a grid-stride loop of frontier elements
+(`blockIdx.x * blockDim.x + threadIdx.x`, strided by `grid.num_threads()`)
+instead of the strict one-thread-per-element mapping files 03/04 use.
+
+The book's own description of Fig. 18.17 (§18.7) says the per-level
+neighbor-discovery body of this kernel "resembles the frontier-based
+kernel from Fig. 18.15" -- i.e. file 04's *privatized*, block-local
+shared-memory frontier construction, not file 03's plain global-atomic
+one -- "the main difference... [being] that a single thread may have to
+handle multiple vertices." So `bfsCoopKernel` here uses the same
+privatization mechanism as `04_bfs_frontier_privatized.cu`: each block
+accumulates discoveries into a small shared-memory frontier
+(`currFrontier_s`, capacity 32) with a block-local shared counter and the
+same overflow fallback to the public frontier if a block's private
+frontier fills up, then flushes it once, with coalesced writes, into a
+range reserved via a single `atomicAdd(numCurrFrontier, ...)`. The
+difference from file 04 is that this flush happens once per BFS level
+rather than once per kernel launch: since cooperative launch fixes the
+block/thread count independent of frontier size, a block's private
+frontier accumulates discoveries across every grid-stride chunk of the
+previous frontier it processes during a level, and is reset and flushed
+only at each level boundary (between `grid.sync()` calls), not after each
+individual chunk.
+
+Per §18.7's kernel argument list -- `numPrevFrontier` (no `_d` suffix) alongside
 `numCurrFrontier_d` (a device pointer) -- `numPrevFrontier` is passed by
 value and kept as a per-thread register updated after each `grid.sync()`
 from a read of `*numCurrFrontier`, while `numCurrFrontier` is the one
@@ -151,28 +172,28 @@ host-side debuggability), leaving the other four files unaffected.
 ```
 == bin/01_bfs_vertex_centric ==
 BFS: vertex-centric push, one thread per vertex per level (§18.3, Fig. 18.6):
-small graph (root=0) (V=13, E=17): 0.1099 ms  [match]
-random 4000-vertex graph (V=4000, E=25592): 0.1758 ms  [match]
+small graph (root=0) (V=13, E=17): 0.1055 ms  [match]
+random 4000-vertex graph (V=4000, E=25592): 0.1724 ms  [match]
 PASS
 == bin/02_bfs_edge_centric ==
 BFS: edge-centric, one thread per edge per level (§18.4, Fig. 18.10):
-small graph (root=0) (V=13, E=17): 0.0895 ms  [match]
-random 4000-vertex graph (V=4000, E=25592): 0.1390 ms  [match]
+small graph (root=0) (V=13, E=17): 0.0977 ms  [match]
+random 4000-vertex graph (V=4000, E=25592): 0.1432 ms  [match]
 PASS
 == bin/03_bfs_frontier_based ==
 BFS: vertex-centric push with frontiers, work-efficient O(n+m) (§18.5, Fig. 18.12/18.14):
-small graph (root=0) (V=13, E=17): 0.1515 ms  [match]
-random 4000-vertex graph (V=4000, E=25592): 0.8172 ms  [match]
+small graph (root=0) (V=13, E=17): 0.1511 ms  [match]
+random 4000-vertex graph (V=4000, E=25592): 0.8214 ms  [match]
 PASS
 == bin/04_bfs_frontier_privatized ==
 BFS: vertex-centric push with privatized (block-local) frontiers (§18.6, Fig. 18.15):
-small graph (root=0) (V=13, E=17): 0.1519 ms  [match]
-random 4000-vertex graph (V=4000, E=25592): 0.9580 ms  [match]
+small graph (root=0) (V=13, E=17): 0.1500 ms  [match]
+random 4000-vertex graph (V=4000, E=25592): 0.9146 ms  [match]
 PASS
 == bin/05_bfs_cooperative_groups ==
 BFS: single-launch multi-level kernel with cooperative-groups grid sync (§18.7, Fig. 18.17):
-small graph (root=0) (V=13, E=17): 0.0543 ms  [match]
-random 4000-vertex graph (V=4000, E=25592): 0.1478 ms  [match]
+small graph (root=0) (V=13, E=17): 0.0554 ms  [match]
+random 4000-vertex graph (V=4000, E=25592): 0.1475 ms  [match]
 PASS
 ```
 
