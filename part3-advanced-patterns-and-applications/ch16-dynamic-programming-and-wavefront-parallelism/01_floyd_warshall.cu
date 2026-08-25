@@ -41,7 +41,7 @@
 __global__ void FW_bottomup(int k, int *dist, int n_vertices) {
     // Distance table column and row
     int col = blockIdx.x * blockDim.x + threadIdx.x;
-    if (col >= n_vertices) return;
+    if (col >= n_vertices) return;  // note: threads that exit here never reach line 54's __syncthreads() below; correct on sm_75 (verbatim from the book) but formally relies on exited threads being excluded from the barrier rather than each live thread executing it uniformly.
     int row = blockIdx.y;
 
     // Index in dist matrix

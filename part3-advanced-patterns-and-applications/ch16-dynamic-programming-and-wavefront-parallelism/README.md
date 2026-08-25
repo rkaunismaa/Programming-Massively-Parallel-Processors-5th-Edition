@@ -128,24 +128,37 @@ L_seq=513   best_score(cpu)=379  best_score(gpu)=379  4.0134 ms  [match]
 PASS
 == bin/03_wavefront_block_tiled ==
 Block-tiled wavefront Smith-Waterman (§16.6, Figs. 16.8-16.12):
-L_seq=1     threads=32  best_score(cpu)=3    best_score(gpu)=3    18.2764 ms  [match]
-L_seq=32    threads=32  best_score(cpu)=22   best_score(gpu)=22   0.2532 ms  [match]
-L_seq=33    threads=32  best_score(cpu)=31   best_score(gpu)=31   0.4301 ms  [match]
-L_seq=256   threads=32  best_score(cpu)=204  best_score(gpu)=204  3.6822 ms  [match]
-L_seq=300   threads=64  best_score(cpu)=179  best_score(gpu)=179  4.1849 ms  [match]
+L_seq=1     threads=32  best_score(cpu)=3    best_score(gpu)=3    0.4037 ms  [match]
+L_seq=7     threads=32  best_score(cpu)=13   best_score(gpu)=13   0.0891 ms  [match]
+L_seq=32    threads=32  best_score(cpu)=22   best_score(gpu)=22   0.2529 ms  [match]
+L_seq=33    threads=32  best_score(cpu)=31   best_score(gpu)=31   0.4310 ms  [match]
+L_seq=256   threads=32  best_score(cpu)=204  best_score(gpu)=204  3.6814 ms  [match]
+L_seq=300   threads=64  best_score(cpu)=179  best_score(gpu)=179  4.1841 ms  [match]
 PASS
 == bin/04_hyperplane_transform ==
 Hypertile (hyperplane-transformed) wavefront Smith-Waterman (§16.7, Figs. 16.15-16.19):
-L_seq=1     threads=32  best_score(cpu)=3    best_score(gpu)=3    21.6515 ms  [match]
-L_seq=32    threads=32  best_score(cpu)=22   best_score(gpu)=22   0.2847 ms  [match]
-L_seq=33    threads=32  best_score(cpu)=31   best_score(gpu)=31   0.4662 ms  [match]
-L_seq=256   threads=32  best_score(cpu)=204  best_score(gpu)=204  3.3587 ms  [match]
-L_seq=300   threads=64  best_score(cpu)=179  best_score(gpu)=179  3.8851 ms  [match]
+L_seq=1     threads=32  best_score(cpu)=3    best_score(gpu)=3    0.4611 ms  [match]
+L_seq=7     threads=32  best_score(cpu)=13   best_score(gpu)=13   0.1116 ms  [match]
+L_seq=32    threads=32  best_score(cpu)=22   best_score(gpu)=22   0.2898 ms  [match]
+L_seq=33    threads=32  best_score(cpu)=31   best_score(gpu)=31   0.4762 ms  [match]
+L_seq=256   threads=32  best_score(cpu)=204  best_score(gpu)=204  3.4191 ms  [match]
+L_seq=300   threads=64  best_score(cpu)=179  best_score(gpu)=179  3.9544 ms  [match]
 PASS
 ```
 
+`L_seq=7, threads=32` in `03`/`04` covers the `L_seq < tile_width`
+(single-tile, `numTiles_x == 1`) case -- see "Fix round 1" in the task-15
+report for why this case matters for `04_hyperplane_transform.cu`'s
+`store_tile`.
+
 All four binaries also pass under `compute-sanitizer --tool memcheck` (0
 errors) at `-arch=sm_75`.
+
+Note: each binary's *first* printed timing (the `L_seq=1`/`n_vertices=1`
+case) includes one-time CUDA context-initialization overhead and is not a
+reliable measurement -- it can run ~10-50x slower than later, larger cases
+timed within the same process. Compare timings across cases within a run,
+not the first line in isolation.
 
 Build and run all samples in this chapter:
 

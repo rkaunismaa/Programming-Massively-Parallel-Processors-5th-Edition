@@ -178,6 +178,11 @@ float runSmithWatermanTiledGPU(std::vector<int> &H_h, const std::string &seqR, c
     int numTiles_x = (L_seq + threads - 1) / threads;
     // Max blocks per antidiagonal
     int numBlocks = numTiles_x;
+    // threads*threads*sizeof(int) dynamic shared mem per block: at threads=128
+    // this is 64KB, at or above the 48KB default per-block cap on many GPUs
+    // (sm_75 included) -- would need cudaFuncAttributeMaxDynamicSharedMemorySize
+    // opt-in past threads~96-128 depending on the GPU. threads<=64 here stays
+    // well under the cap.
     size_t shmemBytes = static_cast<size_t>(threads) * threads * sizeof(int);
 
     GpuTimer timer;
@@ -221,6 +226,7 @@ int main() {
     printf("Block-tiled wavefront Smith-Waterman (§16.6, Figs. 16.8-16.12):\n");
     bool ok = true;
     ok = runTestCase(1, 32) && ok;
+    ok = runTestCase(7, 32) && ok;     // single tile, L_seq < tile_width
     ok = runTestCase(32, 32) && ok;    // exactly one tile
     ok = runTestCase(33, 32) && ok;    // one tile + one incomplete tile
     ok = runTestCase(256, 32) && ok;

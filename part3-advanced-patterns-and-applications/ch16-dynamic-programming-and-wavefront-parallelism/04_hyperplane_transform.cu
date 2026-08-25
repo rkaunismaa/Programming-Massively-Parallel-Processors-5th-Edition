@@ -89,7 +89,13 @@ __device__ inline void store_tile(int *sw, int *swTile, unsigned int L, int tile
     for (unsigned int row = 0; row < (unsigned int)tile_width; row++) {
         int r = tile_width * tile_row + row + 1;
         int q = tile_width * tile_col + _shear((int)threadIdx.x, (int)row) + 1;
-        if (r < (int)L && q < (int)L) sw[r * L + q] = swTile[row * tile_width + threadIdx.x];
+        // Book deviation: Fig. 16.18 omits the q >= 1 check present in the
+        // kernel's own bound check (line ~130). Without it, the shear makes q
+        // go negative for tile_col == 0, aliasing sw[r*L+q] onto a
+        // high-numbered column of row r-1 and zeroing it -- harmless when a
+        // later tile_col overwrites that cell, but permanent data corruption
+        // when numTiles_x == 1 (L_seq < tile_width).
+        if (r < (int)L && q >= 1 && q < (int)L) sw[r * L + q] = swTile[row * tile_width + threadIdx.x];
     }
 }
 
@@ -197,6 +203,11 @@ float runSmithWatermanHyperGPU(std::vector<int> &H_h, const std::string &seqR, c
     int numTiles_x = (L_seq + threads - 1) / threads;
     // Blocks per antidiagonal
     unsigned int numBlocks = numTiles_x;
+    // threads*threads*sizeof(int) dynamic shared mem per block: at threads=128
+    // this is 64KB, at or above the 48KB default per-block cap on many GPUs
+    // (sm_75 included) -- would need cudaFuncAttributeMaxDynamicSharedMemorySize
+    // opt-in past threads~96-128 depending on the GPU. threads<=64 here stays
+    // well under the cap.
     size_t shmemBytes = static_cast<size_t>(threads) * threads * sizeof(int);
 
     GpuTimer timer;
@@ -240,6 +251,7 @@ int main() {
     printf("Hypertile (hyperplane-transformed) wavefront Smith-Waterman (§16.7, Figs. 16.15-16.19):\n");
     bool ok = true;
     ok = runTestCase(1, 32) && ok;
+    ok = runTestCase(7, 32) && ok;     // single tile, L_seq < tile_width
     ok = runTestCase(32, 32) && ok;    // exactly one tile
     ok = runTestCase(33, 32) && ok;    // one tile + one incomplete tile
     ok = runTestCase(256, 32) && ok;
