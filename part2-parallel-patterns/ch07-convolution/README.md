@@ -108,8 +108,9 @@ so both partial tiles and ghost cells at the array edges are exercised.
   ideal arithmetic intensity of `(1/4)m^2` FLOP/B -- e.g. 2.25 FLOP/B for a
   3x3 filter (memory-bound) vs. 30.25 FLOP/B for an 11x11 filter
   (compute-bound on an H100). The tiled kernel of file 03 attains an
-  intensity of `(1/4)m^2 * 1/(2*(1+(m-1)/t)+(m-1)^2/t^2)` for output tile
-  dimension `t`, approaching the ideal as `t` grows.
+  intensity of `(1/2)*m^2 / ((1+(m-1)/t)^2 + 1)` for output tile dimension
+  `t`, approaching the ideal as `t` grows -- e.g. 5.42 FLOP/B for `m=5,
+  t=28` (Fig. 7.14's own worked value).
 - **§7.7 Summary** notes that stencil algorithms in PDE solvers (Chapter 8)
   are a special case of convolution, and that convolutional neural networks
   (Chapter 20) build directly on this chapter's techniques.

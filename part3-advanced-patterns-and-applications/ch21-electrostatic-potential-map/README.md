@@ -75,6 +75,21 @@ count the chapter itemizes ("eliminates three accesses to constant memory
 for the y coordinate ... three for the x coordinate ... three for the
 charge ... when processing an atom for four grid points").
 
+**The book's own operation count, verified.** §21.3's text gives exact
+absolute counts, not just the qualitative "eliminates three accesses"
+framing above, for processing one atom against the same 4 grid points:
+Fig. 21.6 (uncoarsened, 4 separate threads) performs 16 constant-memory
+accesses and 12 each of subtractions/additions/multiplications/divisions
+(48 floating-point operations total); Fig. 21.8 (`COARSEN=4`, one thread)
+performs 4 constant-memory accesses, 3 subtractions, 11 additions, 6
+multiplications, and 4 divisions (24 floating-point operations total) --
+"a total reduction from 16 constant memory accesses and 48 operations down
+to 4 constant memory accesses and 24 floating-point operations." The
+chapter also notes the cost of this optimization directly: "more registers
+are used by each thread. This can potentially reduce occupancy" -- though
+it adds that register use "stays within the allowed limit" for its own
+example, so occupancy isn't actually limited there.
+
 This file deliberately keeps Fig. 21.8's **adjacent** grid-point-per-thread
 assignment (`xBase, xBase+1, xBase+2, xBase+3`) -- the un-coalesced layout
 that §21.4 identifies as the next problem to fix. `04_dcs_coalesced.cu` is
@@ -177,6 +192,39 @@ machinery and the cutoff decision itself.
   handling is needed for correctness. This keeps the sample focused on the
   binning/neighborhood/cutoff technique itself, which is what the task
   brief for this file scopes to.
+
+## Results (RTX 4090, `sm_89`, binaries built for `-arch=sm_75`; `DEBUG=0`)
+
+```
+== bin/01_dcs_scatter ==
+grid=96x96 spacing=0.50 atoms=4000 chunk=1500: 11.4747 ms  [match]
+== bin/02_dcs_gather ==
+grid=96x96 spacing=0.50 atoms=4000 chunk=1500: 0.3482 ms  [match]
+== bin/03_dcs_coarsened ==
+grid=96x96 spacing=0.50 atoms=4000 chunk=1500 coarsen=4: 0.8868 ms  [match]
+== bin/04_dcs_coalesced ==
+grid=96x96 spacing=0.50 atoms=4000 chunk=1500 coarsen=4: 0.9411 ms  [match]
+== bin/05_dcs_cutoff_binning ==
+grid=96x96 spacing=0.50 atoms=4000 bin=8x8 cutoff=12.0: 0.1208 ms  [match]
+```
+
+Scatter-vs-gather (`01` vs `02`) reproduces the book's claim cleanly: a
+~33x speedup from dropping atomics. Coarsening (`03`, `04`), despite
+provably doing half the floating-point work and a quarter the
+constant-memory accesses per §21.3's own operation count above, measures
+*slower* than the plain gather kernel (`02`) at this grid size -- reported
+as measured, not smoothed over. The reason is countable, not a guess: `02`
+launches `dim3 block(16,16)` over a `6x6` grid = 36 blocks; `03`/`04`
+launch `dim3 block(8,16)` over a `3x6` grid = 18 blocks (exactly
+`COARSEN`-times fewer, since each block now covers 4x the x-range). On a
+128-SM GPU, 36 blocks already leaves most SMs with nothing to do; halving
+that to 18 blocks leaves even more idle, and at this grid size (`96x96`,
+independent per-slice work with no z-loop) that launch-width loss outweighs
+the real per-thread efficiency gain the book's operation count predicts.
+This doesn't contradict §21.3 -- the operation-count reduction is real and
+verified above -- it's a reminder that the benefit only shows up once the
+kernel has enough total work to be occupancy- rather than launch-width
+-bound, which a single `96x96` slice with `COARSEN=4` does not reach here.
 
 ## Compute-sanitizer
 

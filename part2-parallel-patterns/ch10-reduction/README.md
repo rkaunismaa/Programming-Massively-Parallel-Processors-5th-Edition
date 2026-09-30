@@ -91,10 +91,14 @@ comment says so.
 
 For the convergent kernel, owned locations are always adjacent within a
 warp, so "the adjacent threads in each warp always access adjacent
-locations in the global memory so the accesses are always coalesced" --
-§10.5 only asserts this qualitatively (no competing total is derived in
-the text), so this file does not invent a number for it; the timing
-columns speak to the real effect instead.
+locations in the global memory so the accesses are always coalesced."
+§10.5 itself only asserts this qualitatively, but §10.6 gives the matching
+N=256 total directly when opening its shared-memory argument: "the total
+number of global memory requests triggered will be reduced from 36 for
+the kernel in Fig. 10.8 to 8+1=9 for the shared memory kernel" -- so the
+book does derive a second number, one section later than §10.5 itself.
+This file reproduces both book-given totals (141 and 36) for N=256,
+alongside the timing comparison.
 
 ## §10.6 Reducing global memory accesses -- `04_reduction_shared_memory.cu`
 

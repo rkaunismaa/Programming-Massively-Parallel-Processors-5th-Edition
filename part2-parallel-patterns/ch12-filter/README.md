@@ -10,22 +10,25 @@ Source: *Programming Massively Parallel Processors*, 5th ed., Ch. 12 (pp. 289-30
 | `04_filter_stable.cu` | §12.5 | Simple stable filter (Figs. 12.7-12.8): order-preserving compaction via a grid-wide exclusive scan of a 0/1 "keep" flag, built on Ch. 11's single-lookback global scan |
 | `05_filter_stable_coalesced_coarsened.cu` | §12.6 | Memory coalescing + thread coarsening (Figs. 12.9-12.10): per-block shared-memory gather before one contiguous global write per block, `COARSE_FACTOR=4` |
 | `06_filter_in_place_stable.cu` | §12.7 | In-place stable filter (Fig. 12.11): file 04's kernel, unmodified in its ordering logic, run with input and output pointing at the same buffer |
+| `07_filter_remove_duplicates.cu` | §12.8 | Related pattern: removing duplicate keys from a sorted list, a named special case of stable filter (`keep[i] = input[i] != input[i-1]`) -- file 04's exact scan/lookback machinery, different predicate |
 
-All six files filter `unsigned int` keys under the same predicate,
+Files 01-06 filter `unsigned int` keys under the same predicate,
 `cond(val) = (val % 2 == 0)` (keep even-valued keys) -- deterministic, cheap
 to check on the host, and keeps roughly half of any random input so every
-test case exercises real compaction. Every file uses the same style of
-deterministic synthetic input generator (`generateInput`, duplicated per
-file per this repo's convention, each with its own PRNG seed): a small
-linear-congruential PRNG producing `unsigned int` values in `[0, 65536)`.
+test case exercises real compaction. File 07 (§12.8's duplicate-removal
+variant) instead generates a *sorted* input with genuine duplicate runs,
+since its predicate only makes sense on sorted data. Every file uses the
+same style of deterministic synthetic input generator (`generateInput`,
+duplicated per file per this repo's convention, each with its own PRNG
+seed): a small linear-congruential PRNG.
 
 **Unstable vs. stable checks.** Per §12.1's own terminology (Fig. 12.1):
 files 01-03 are unstable, so their GPU output is checked as a **set**
 against the CPU reference (sort-and-compare of the surviving multiset,
 plus a count check) -- their surviving keys may land in any order. Files
-04-06 are stable, so their GPU output is checked for **exact,
+04-07 are stable, so their GPU output is checked for **exact,
 order-preserving equality** (`gpu == ref`, a plain vector comparison)
-against a sequential CPU filter that preserves input order.
+against a sequential CPU filter/dedupe that preserves input order.
 
 ## §12.2 A simple parallel unstable filter -- `01_filter_unstable.cu`
 
@@ -195,6 +198,38 @@ files 04-05 use.
 Measured: 19 registers/thread, 40 bytes static shared memory (identical
 layout to file 04).
 
+## §12.8 Related patterns: removing duplicate keys -- `07_filter_remove_duplicates.cu`
+
+§12.8 surveys several patterns related to stable filter without giving code
+for any of them. The first, duplicate removal from a sorted list, is fully
+specified in prose: "This pattern can be viewed as a special case of the
+filter pattern where the condition for the key to be preserved is that the
+key is not equal to the preceding key." That drops directly into file 04's
+exact scan/lookback machinery with a one-line change to what "keep" means
+(`keep[i] = (i==0) || (input[i] != input[i-1])`), so this file reuses file
+04's `warpScan`/`blockScan`/`interBlockScan` verbatim and only replaces the
+keep computation, the CPU reference (sequential dedupe), and the input
+generator (a sorted array with genuine duplicate runs, since the pattern
+is only meaningful on sorted data).
+
+§12.8's other two related patterns -- removing/adding rows or columns from
+a matrix -- are described only at a high level (positions are computed
+analytically rather than via scan, and a one-directional synchronization
+without partial-sum propagation suffices) and are not implemented here;
+unlike duplicate removal, they'd need a genuinely new 2D worked example
+rather than a predicate swap on existing machinery.
+
+Measured: 19 registers/thread, 40 bytes static shared memory (identical
+layout to file 04 -- same kernel structure, different keep predicate).
+
+## §12.1 Notes not given a separate file
+
+§12.1 (Background) is conceptual: it defines filtering, distinguishes
+in-place from out-of-place filters (Fig. 12.1's unstable/stable examples),
+and motivates the pattern with a garbage-collection/heap-compaction example.
+It has no standalone kernel of its own and is folded into the background
+above rather than given a separate file.
+
 ## Results (RTX 4090, `sm_89`, binaries built for `-arch=sm_75`; this
 environment's default CUDA device 0 is the 4090, not the 2070 SUPER)
 
@@ -228,6 +263,11 @@ PASS
 N=1024 (blocks=4): cpu kept=512 gpu kept=512 (in-place)  0.0072 ms  [match]
 N=100000 (blocks=391): cpu kept=50003 gpu kept=50003 (in-place)  0.1874 ms  [match]
 N=1048576 (blocks=4096): cpu kept=524288 gpu kept=524288 (in-place)  1.9077 ms  [match]
+PASS
+== bin/07_filter_remove_duplicates ==
+N=1024 (blocks=4): cpu unique=294 gpu unique=294  0.0072 ms  [match]
+N=100000 (blocks=391): cpu unique=28542 gpu unique=28542  0.1803 ms  [match]
+N=1048576 (blocks=4096): cpu unique=299176 gpu unique=299176  1.8821 ms  [match]
 PASS
 ```
 

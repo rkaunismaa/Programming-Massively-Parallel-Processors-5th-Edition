@@ -261,8 +261,8 @@ int main(int argc, char** argv) {
         // Second MPI_Sendrecv: send my new bottom boundary row
         // (row nyLocal-2) to my bottom neighbor; receive my top halo row
         // (row 0) from my top neighbor.
-        MPI_CHECK(MPI_Sendrecv(d_output + (nyLocal - 2) * nx, nx, MPI_FLOAT, bottomNeighbor, 1,
-                               d_output, nx, MPI_FLOAT, topNeighbor, 1,
+        MPI_CHECK(MPI_Sendrecv(d_output + (nyLocal - 2) * nx, nx, MPI_FLOAT, bottomNeighbor, 0,
+                               d_output, nx, MPI_FLOAT, topNeighbor, 0,
                                MPI_COMM_WORLD, MPI_STATUS_IGNORE));
 
         // Fig. 23.7 lines 20-25, Fig. 23.11: copy this rank's partial L2

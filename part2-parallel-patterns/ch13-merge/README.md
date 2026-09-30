@@ -148,6 +148,38 @@ Measured: 49 registers/thread, 16 bytes static shared memory
 (`blockCorank[2]` = 8 bytes + compiler padding) plus the same dynamic
 `2*tile_size*4`-byte `A_S`/`B_S` buffer as file 02.
 
+**A counterintuitive result, reported rather than hidden**: on this repo's
+GPU, file 03 (circular buffer) measures *slower* than file 02 (plain
+tiled) at every test case (e.g. book example: `~0.045 ms` vs `~0.031 ms`)
+-- the opposite of what §13.7's own motivation would suggest, since the
+circular buffer eliminates the redundant global-memory re-reads §13.6
+explicitly calls out ("wastes half the memory bandwidth"). Two candidate
+explanations, neither confirmed by profiling (`ncu`'s hardware performance
+counters are unavailable in this environment --
+`ERR_NVGPUCTRPERM`/`sudo` both blocked -- so this is offered as reasoning,
+not a measured root cause):
+
+- The circular-buffer kernel's every buffer access goes through an extra
+  `% tile_size` (modulo) in `co_rank_circular`/`merge_sequential_circular`,
+  paid unconditionally on every element regardless of whether that
+  element's underlying global-memory read was actually redundant or not --
+  a real, always-on compute cost traded for a memory-traffic saving.
+- §13.6/§13.7's bandwidth argument assumes every reload is a genuine DRAM
+  access. At these problem sizes (tens of thousands to hundreds of
+  thousands of elements, a few hundred KB to a few MB total), file 02's
+  "redundant" reloads of already-touched `A`/`B` ranges plausibly hit this
+  GPU's 72 MB L2 cache rather than DRAM -- the same
+  L2-narrows-the-real-world-effect pattern this repo's Ch. 5/Ch. 6 samples
+  document directly, just not confirmed here with counters. If so, file
+  02 pays little of the bandwidth cost §13.7 is designed to eliminate,
+  while file 03 still pays the modulo overhead in full.
+
+This doesn't contradict the *mechanism* §13.7 describes (full reuse of
+loaded shared-memory data, verified correct above) -- it's a measured,
+hardware- and problem-size-specific result about which cost dominates
+here, consistent with this project's convention of reporting real numbers
+over assumed ones.
+
 ## §13.8 Thread coarsening for merge -- `04_merge_coarsened.cu`
 
 §13.8's point is narrow: every kernel in this chapter is already

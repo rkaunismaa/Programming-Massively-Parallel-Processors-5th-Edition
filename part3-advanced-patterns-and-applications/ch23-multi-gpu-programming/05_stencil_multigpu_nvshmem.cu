@@ -282,6 +282,20 @@ int main(int argc, char** argv) {
         // halo-exchange puts are fused in jacobiKernelNvshmem.
         launchJacobiKernelNvshmem(output, input, nx, nyLocal, d_l2normSq, topPe, bottomPe, stream);
 
+        // Fig. 23.25 lines 12-16: same MPI_Allreduce-based L2 norm
+        // reduction as the MPI/NCCL versions -- NVSHMEM replaces only the
+        // halo exchange, not the L2-norm collective. This is purely local
+        // bookkeeping (each PE's own already-computed residual sum), so it
+        // has no dependency on whether this PE's puts -- or any other PE's
+        // puts to this PE -- have arrived yet; per Fig. 23.25's own line
+        // ordering, it runs before the barrier below.
+        CUDA_CHECK(cudaMemcpyAsync(l2norm_h, d_l2normSq, sizeof(float), cudaMemcpyDeviceToHost, stream));
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+
+        float l2normSumSq_h = 0.0f;
+        MPI_CHECK(MPI_Allreduce(l2norm_h, &l2normSumSq_h, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD));
+        l2norm = std::sqrt(l2normSumSq_h);
+
         // §23.5, Fig. 23.25 line 18: nvshmemx_barrier_all_on_stream is
         // required because finishing the kernel only guarantees the put
         // operations were *initiated*, not that the data has *arrived* at
@@ -290,18 +304,11 @@ int main(int argc, char** argv) {
         // does not guarantee that the data has been received... This call
         // makes all PEs wait at the barrier until all the NVSHMEM memory
         // access operations initiated by any preceding kernels in the
-        // stream have completed.").
+        // stream have completed."). Must still complete before the next
+        // iteration's kernel launch reads the just-exchanged halo rows,
+        // which it does here, matching the book's own line 18 placement
+        // (after the L2-norm copy/reduce, before the swap).
         nvshmemx_barrier_all_on_stream(stream);
-
-        CUDA_CHECK(cudaMemcpyAsync(l2norm_h, d_l2normSq, sizeof(float), cudaMemcpyDeviceToHost, stream));
-        CUDA_CHECK(cudaStreamSynchronize(stream));
-
-        // Fig. 23.25 lines 12-16: same MPI_Allreduce-based L2 norm
-        // reduction as the MPI/NCCL versions -- NVSHMEM replaces only the
-        // halo exchange, not the L2-norm collective.
-        float l2normSumSq_h = 0.0f;
-        MPI_CHECK(MPI_Allreduce(l2norm_h, &l2normSumSq_h, 1, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD));
-        l2norm = std::sqrt(l2normSumSq_h);
 
         std::swap(input, output);
         ++iter;

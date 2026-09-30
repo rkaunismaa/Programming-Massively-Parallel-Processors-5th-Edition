@@ -34,21 +34,23 @@
 // e^(m_r,A - m_r,A∪B) rescale before the new terms are added -- this is
 // what update_m_and_D()/compute_O() below do.
 //
-// NOTE on a probable OCR artifact in the extracted chapter text: the prose
-// describing update_m_and_D() (Fig. 20.14) states that its line 6 "computes
-// the term D_r,B * e^(m_r,B - m_r,A∪B)" -- but at that point in the code, D_i
-// still holds only the old D_r,A (the new tile's contribution D_r,B isn't
-// summed until compute_P_and_update_D() runs afterwards), and the function
-// has no access to a not-yet-computed D_r,B. The only interpretation
-// consistent with the code's actual data flow -- and the one implemented
-// here -- is that this line rescales the *old* term, i.e. computes
+// NOTE on a confirmed error in the book's own text (not an extraction
+// artifact -- verified by reading the rendered page image directly, not a
+// pdftotext/OCR pass): the prose describing update_m_and_D() (Fig. 20.14)
+// states that its line 6 "computes the term D_r,B * e^(m_r,B - m_r,A∪B)" --
+// but at that point in the code, D_i still holds only the old D_r,A (the
+// new tile's contribution D_r,B isn't summed until
+// compute_P_and_update_D() runs afterwards), and the function has no access
+// to a not-yet-computed D_r,B. The only interpretation consistent with the
+// code's actual data flow -- and the one implemented here -- is that this
+// line rescales the *old* term, i.e. computes
 // D_i[ii] = D_r,A * e^(m_r,A - m_r,A∪B), matching the first addend of Eq.
 // (20.4)/(20.6); compute_P_and_update_D() then computes the D_r,B term
 // directly against the merged max and adds it (Fig. 20.15 lines 10-14),
 // completing the composition rule with no separate rescale needed for that
-// term. This is almost certainly a subscript transcription slip (A vs. B)
-// in the source PDF's math rendering, not a deviation this file is taking
-// from the book -- the implementation follows Eq. (20.4)/(20.6) exactly.
+// term. This is a subscript transcription slip (A vs. B) in the published
+// book text itself, not a deviation this file is taking from the book --
+// the implementation follows Eq. (20.4)/(20.6) exactly.
 //
 // CPU reference: the same full causal-softmax naive attention as file 01
 // (double precision), reproduced locally per this repo's no-cross-file-

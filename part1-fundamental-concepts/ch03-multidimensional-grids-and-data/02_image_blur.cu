@@ -83,6 +83,13 @@ float runBlur(const unsigned char *in_h, unsigned char *out_h, int w, int h) {
     dim3 dimBlock(16, 16, 1);
     dim3 dimGrid((w + 15) / 16, (h + 15) / 16, 1);
 
+    // Warm-up launch (result discarded): absorbs the one-time PTX->SASS JIT
+    // cost the driver may pay the first time this kernel is touched on a
+    // fresh build, so it doesn't leak into the single timed launch below.
+    blurKernel<<<dimGrid, dimBlock>>>(in_d, out_d, w, h);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
     GpuTimer timer;
     timer.start();
     blurKernel<<<dimGrid, dimBlock>>>(in_d, out_d, w, h);
