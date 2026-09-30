@@ -6,14 +6,19 @@ Source: *Programming Massively Parallel Processors*, 5th ed., Ch. 5 (pp. 93-121)
 |------|-------------|-----------|
 | `01_tiled_matrix_multiplication.cu` | §5.4 | `matrixMulTiledKernel` (Fig. 5.9): shared-memory tiled matmul for `Width` an exact multiple of `TILE_WIDTH`, timed against the §3.4 naive kernel for context |
 | `02_tiled_matmul_boundary_checked.cu` | §5.5 | `matrixMulTiledBoundaryCheckedKernel` (Fig. 5.13): the same tiled kernel generalized with boundary checks for arbitrary `Width` |
+| `03_dynamic_shared_tiled_matmul.cu` | §5.6 | `matrixMulTiledDynamicSharedKernel` (Fig. 5.14): the tiled kernel with `TILE_WIDTH` as a runtime parameter via `extern __shared__`, tested at three tile widths with no recompilation |
+| `04_shared_memory_occupancy.cu` | §5.6 | `cudaOccupancyMaxActiveBlocksPerMultiprocessor`, sweeping shared-memory-per-block at a fixed 256-thread block size to reproduce the section's shared-memory-limited-occupancy example |
 
 §5.1 (the roofline model and compute-to-global-memory-access ratio) and §5.2
 (CUDA's memory types -- registers, local, shared, constant, global -- and
 their scope/lifetime/declaration syntax) are conceptual background with no
 standalone kernel listing of their own, so they are summarized here rather
-than given a sample file. §5.6 (impact of memory usage on occupancy and
-dynamically-sized shared memory via `extern __shared__`) is likewise
-conceptual and not exercised by a sample.
+than given a sample file. §5.6 (impact of memory usage on occupancy) is
+likewise conceptual prose with no complete kernel listing of its own --
+Fig. 5.14 shows only a declaration fragment -- but it names a concrete,
+demonstrable technique (dynamically sized shared memory) and works a
+concrete numeric occupancy example, so it gets two samples despite having
+no complete listing.
 
 - A kernel is *compute-bound* if its performance is limited by peak FLOPS,
   *memory-bound* if limited by peak memory bandwidth; which regime a kernel
@@ -126,6 +131,60 @@ than accidentally dead code:
 Each case computes a CPU reference with the same triple-loop inner-product
 formula and checks the GPU result against it with `nearlyEqual`; PASS
 requires all three sizes to match.
+
+## §5.6 Dynamically sized shared memory -- `03_dynamic_shared_tiled_matmul.cu`
+
+§5.6 observes that `01_tiled_matrix_multiplication.cu` and
+`02_tiled_matmul_boundary_checked.cu` (like Figs. 5.9 and 5.13 they
+implement) hardwire `TILE_WIDTH` as a compile-time `#define`: "The kernel
+cannot easily adjust its shared memory usage at runtime without
+recompilation." Fig. 5.14 fixes this by merging `Mds`/`Nds` into one
+`extern __shared__` array, sized at launch time via the kernel call's
+third `<<<...>>>` argument, with the two logical sections manually
+addressed inside the single linearized buffer.
+
+Fig. 5.14 itself shows only the declaration and the two pointer
+derivations, not a full kernel body, so this sample completes it: the same
+tiled-matmul algorithm as Fig. 5.9, but with `TILE_WIDTH` now a runtime
+parameter. The two sections are addressed with plain element offsets
+(`Mds_Nds` and `Mds_Nds + tileWidth*tileWidth`, both already `float*`)
+rather than the byte-count parameter pair Fig. 5.14's own listing takes
+(whose interaction with that listing's pointer casts is ambiguous from the
+printed text) -- an unambiguous way to do the same thing the figure
+demonstrates. Tested at `tileWidth` = 8, 16, and 32 against the same CPU
+reference, with no recompilation between runs -- the point Fig. 5.14
+exists to make. PASS requires all three tile widths to match.
+
+## §5.6 Shared-memory-limited occupancy -- `04_shared_memory_occupancy.cu`
+
+§5.6 also works a specific numeric example distinct from Chapter 4's
+register-driven occupancy discussion: a kernel with 256-thread blocks
+using 38 KB of shared memory each achieves at most 75% occupancy on an
+H100, because shared memory (not registers or thread slots) becomes the
+binding resource. This is the same API Chapter 4's
+`04_occupancy_query.cu` exercises for register pressure
+(`cudaOccupancyMaxActiveBlocksPerMultiprocessor`), applied here to shared
+memory instead.
+
+Rather than hardcode the H100's figures, this sample queries the actual
+GPU's limits and asks the real API. Block size is held fixed at 256
+threads (the book's own value) while the *hypothetical* shared-memory
+request per block is swept from 0 up to the classic 48 KB default
+per-block limit -- the occupancy API accepts any `dynamicSMemSize` query
+without requiring a kernel actually launched with that value, which
+cleanly isolates the shared-memory dimension from thread count. On this
+repo's RTX 4090 (1536 threads/SM, 100 KB shared memory/SM), the result
+reproduces the book's crossover shape exactly: 100% occupancy (6 blocks/SM,
+thread-slot-limited) through 8 KB/block, then a step-wise drop as shared
+memory becomes the binding constraint, down to 33% (2 blocks/SM) at 40 KB.
+
+The kernel queried (`matrixMulTiledDynamicSharedKernel`, shared with
+`03_dynamic_shared_tiled_matmul.cu`) is also run for real at `tileWidth =
+16` (256 threads, matching the swept block size) and checked against a CPU
+reference, so PASS/FAIL doesn't rest on occupancy numbers alone. PASS also
+requires active-blocks-per-SM to never increase as the shared-memory
+request grows -- a kernel can never fit more resident blocks by asking for
+more shared memory per block.
 
 Build and run all samples in this chapter:
 
