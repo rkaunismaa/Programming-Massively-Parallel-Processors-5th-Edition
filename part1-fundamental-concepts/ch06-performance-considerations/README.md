@@ -10,6 +10,7 @@ Source: *Programming Massively Parallel Processors*, 5th ed., Ch. 6 (pp. 123-155
 | `04_thread_coarsening.cu` | §6.5 | Thread coarsening applied to the Ch. 5 tiled matmul: one M tile reused across `COARSE_FACTOR` N tiles |
 | `05_loop_unrolling.cu` | §6.6 | `#pragma unroll` vs. `#pragma unroll 1` on a tiled matmul's inner accumulation loop |
 | `06_double_buffering_async_copy.cu` | §6.7 | Double-buffered shared-memory tile loading via SM80+ `cuda::memcpy_async`/`cuda::pipeline` (cp.async) — **requires compute capability >= 8.0** |
+| `07_corner_turning.cu` | §6.1/§6.4 | Corner turning (Fig. 6.4) for a column-major second matmul input, plus the padding fix for the bank conflict its transposed shared-memory store introduces (§6.4's own worked example) |
 
 §6.2 (hiding memory latency via DRAM banks/channels and occupancy) and §6.8-6.9
 (the optimization checklist and strategy, which point forward to techniques
@@ -88,7 +89,9 @@ write) rather than by the ~200-cycle serialization added by the shared
 memory conflict itself; the *mechanism* the book describes (32-way
 serialized shared-memory access vs. one access per cycle) is real and
 reproduced here, it's just not the kernel's bottleneck at this problem
-size on this hardware.
+size on this hardware. `07_corner_turning.cu` revisits this same conflict
+in the exact scenario §6.4's own text uses to introduce it (corner
+turning's transposed store), rather than a standalone transpose kernel.
 
 ## §6.5 Thread coarsening — `04_thread_coarsening.cu`
 
@@ -168,6 +171,58 @@ pipeline bookkeeping overhead outweighs the benefit of overlapping a
 result rather than a case for hiding the number — the mechanism (real
 `cp.async`-based prefetch with block-mate-safe synchronization) is what
 this file demonstrates, not a guaranteed win at every problem size.
+
+## §6.1/§6.4 Corner turning — `07_corner_turning.cu`
+
+§6.1 covers a scenario distinct from files 01's row-major-vs-column-major
+column sums: a *tiled matmul* whose second input `N` is column-major (e.g.
+because it's really a row-major matrix's transpose, accessed in place).
+Loading `N`'s tile the same way `M`'s tile is loaded gives every thread its
+"own" element, but since `N` is column-major this makes consecutive
+threads (consecutive `tx`, fixed `ty`) read locations `Width` apart —
+uncoalesced (Fig. 6.4(a)). The book's fix, *corner turning*: "exchange the
+roles of `threadIdx.x` and `threadIdx.y` when each thread calculates the
+linearized index for loading the `N` input tile" (Fig. 6.4(b)) — thread
+`(tx,ty)` loads the element that would "naturally" belong to thread
+`(ty,tx)`, so consecutive `tx` now advances `N`'s contiguous (row)
+dimension: coalesced.
+
+§6.4 then revisits this *exact* kernel rather than a fresh example:
+"consider the corner turning optimization in Fig. 6.4(b) ... Although the
+threads load from global memory in a coalesced manner, their stores to
+shared memory have a strided pattern." Storing the corner-turned load at
+`Nds[tx][ty]` (needed so the dot-product loop, unchanged, can still read
+`Nds[k][tx]`) means a warp (fixed `ty`, `tx` = 0..31) writes to linear
+shared-memory offsets `tx*TILE_WIDTH+ty` — all reducing to the same bank
+mod `TILE_WIDTH`: the section's own 32-way conflict, arising here rather
+than in a standalone kernel. Padding to `Nds[TILE_WIDTH][TILE_WIDTH+1]`
+(the same fix as `03_shared_memory_bank_conflicts.cu`) removes it.
+
+This file implements all three stages as three complete tiled-matmul
+kernels multiplying a row-major `M` by a column-major `N`, differing only
+in the single line that loads `N`'s tile:
+
+- **`matrixMulNoCornerTurningKernel`** — uncoalesced global load,
+  conflict-free shared store (Fig. 6.4(a)).
+- **`matrixMulCornerTurningKernel`** — coalesced global load, conflicting
+  shared store (Fig. 6.4(b), unpadded).
+- **`matrixMulCornerTurningPaddedKernel`** — coalesced global load,
+  conflict-free shared store (Fig. 6.4(b) + §6.4's padding).
+
+All three are checked against the same CPU reference (**PASS** requires
+all three to match). At `Width = 1024` on this repo's GPU: no corner
+turning ~0.429 ms vs. corner turning (unpadded) ~0.421 ms vs. corner
+turning + padded ~0.335 ms — corner turning *alone* barely helps here
+(~2%), because at this problem size (4 MB matrices, well inside this
+GPU's 72 MB L2 cache) the uncoalesced-load penalty it removes and the
+bank-conflict penalty it introduces are of similar size; padding is what
+delivers the real gain (~1.28x overall). This is the same
+L2-narrows-the-effect caveat this repo's other memory-traffic comparisons
+at `Width = 1024` note (Ch. 5's tiled-vs-naive comparison, this chapter's
+thread-coarsening sample) — the *mechanisms* (coalescing, bank conflicts) are
+real and both reproduced here; their combined, cache-narrowed net effect
+at this problem size is an honest result, not a case for hiding the
+number.
 
 Build and run all samples in this chapter:
 
