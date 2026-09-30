@@ -89,3 +89,37 @@ Samples implement the kernels, host code, and algorithms the book's
 prose and figures actually present, chapter by chapter. End-of-chapter
 exercises are not implemented. Appendices A–C and Chapter 1/24 are out
 of scope (see the design spec in `docs/superpowers/specs/`).
+
+## October 2026 walkthrough
+
+Every chapter (3–23) was re-validated against the book text one at a
+time — reading the actual chapter, cross-checking every sample and every
+number a chapter's README states against it, building and running each
+sample (and `compute-sanitizer` where a chapter already used it) — rather
+than assuming prior work was correct. Each chapter's own README has the
+full detail; this table is a pointer to what changed, not a substitute
+for it.
+
+| Ch | Outcome |
+|----|---------|
+| 3 | Fixed misleading timings: no warm-up launch meant a fresh build's first run measured one-time JIT-compile cost, not kernel time (~30–50x inflated). Added warm-up to all three samples. |
+| 4 | Added two samples: loop-divergence cost (Fig. 4.10) measured against uniform-trip-count baselines, and the `cudaOccupancyMaxActiveBlocksPerMultiprocessor` API (named in §4.7, previously unused by any sample). |
+| 5 | Added two samples: the runtime-configurable `extern __shared__` technique (Fig. 5.14), and a shared-memory-driven occupancy sweep (§5.6, this chapter's counterpart to Ch. 4's register-driven one). |
+| 6 | Added a corner-turning sample (§6.1/§6.4, Fig. 6.4) — the book's own coalescing + bank-conflict example, previously unimplemented. |
+| 7 | Fixed a factor-of-2 error in the README's transcription of the tiled kernel's arithmetic-intensity formula. No code changes. |
+| 8 | Reviewed — samples, figures, and numbers all check out. No changes. |
+| 9 | Added two head-to-head samples the book itself sets up but neither had been measured against the other: global- vs. shared-memory privatization (Fig. 9.9 vs. 9.10), and contiguous- vs. interleaved-partitioning coarsening (Fig. 9.12 vs. 9.14). |
+| 10 | Fixed an omitted book-stated number (the convergent kernel's memory-request count) in the README. No code changes. |
+| 11 | Reviewed — every derived formula and figure checks out. No changes. |
+| 12 | Added a duplicate-key-removal sample (§12.8's named special case of stable filter) and a missing README section. |
+| 13 | Explained a counterintuitive measured result (circular-buffer tiling measuring slower than plain tiling) that the README reported but didn't account for. No code changes. |
+| 14 | Added a 2-bit radix sort sample (§14.7, Figs. 14.10–14.12) and corrected a README note that mischaracterized this section as out of scope. |
+| 15 | Added the README's missing Results section, which surfaced (and explained) another counterintuitive measured result. No code changes. |
+| 16 | Added a missing README section summarizing the chapter's conceptual sections. No code changes. |
+| 17 | Same as Ch. 16 — added the missing conceptual-sections summary. No code changes. |
+| 18 | Added a push-vs-pull BFS sample (Fig. 18.6 vs. 18.8) — another book-set-up comparison that had never been measured. |
+| 19 | Added a memory-access/bank-conflict analysis for Fig. 19.11 (answering an exercise the book poses as analysis, not code) and a missing README section. No code changes. |
+| 20 | Confirmed a discrepancy between the book's prose and its own code (Fig. 20.14) is a genuine error in the published text, not a `pdftotext` artifact as previously hedged — verified by reading the actual rendered page. Answered two more analysis exercises. No code changes. |
+| 21 | Added the book's own operation-count numbers (previously uncaptured) and the README's missing Results section, which surfaced and explained a genuine counterintuitive result (coarsening measuring slower at this grid size). No code changes. |
+| 22 | Reviewed — this chapter is a retrospective with one implementable section, already correctly scoped and implemented. No changes. |
+| 23 | Real NCCL/NVSHMEM headers turned out to be present on this machine (as pip dependencies of unrelated environments); recompiled the NCCL/NVSHMEM samples against them, confirming every API signature the README had flagged as needing a reviewer's double-check. Found and fixed two trivial, functionally-harmless deviations from the book's exact listings. MPI itself remains unavailable, so those samples are compile-verified, not run-verified. |
