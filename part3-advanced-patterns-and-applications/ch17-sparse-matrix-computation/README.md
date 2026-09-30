@@ -55,6 +55,34 @@ chapter's samples, and §17.7's CSC file implements the SpMV/CSC kernel the
 section spells out directly (Fig. 17.18) rather than the transpose/SpMSpV
 variants only mentioned in passing at the end of §17.7.
 
+## §17.1, §17.8-17.9 Notes not given a separate file
+
+- **§17.1 Background**: sparse matrices arise from sparsely-coupled linear
+  systems (`A*X+Y=0`); direct inversion is impractical (fill-ins, size), so
+  iterative methods (e.g. Conjugate Gradient) are used instead, each
+  iteration dominated by the sparse matrix-vector product `A*X+Y`, hence
+  the chapter's running operation, SpMV. §17.1 also gives the five design
+  considerations every format section (§17.2-§17.7) explicitly re-examines
+  in the same order: *space efficiency*, *flexibility* (adding/removing
+  non-zeros), *accessibility* (what's easy to look up given a non-zero,
+  row, or column), *memory access efficiency* (coalescing), and *load
+  balance* (control divergence from uneven row/column lengths).
+- **§17.8 Summary**: sparse matrix computation is offered as the
+  chapter's example of *data-dependent* performance -- the FLOPS rating of
+  SpMV on both CPUs and GPUs is inherently much lower than dense matrix
+  computation (explicit indices instead of implicit ones, harder to tile),
+  which the book says should no longer be surprising after this chapter.
+  Hybrid and sorting/partitioning methods are named as *regularization*
+  techniques that trade back some compaction to recover regularity.
+  cuSPARSE is named as the production-grade library implementing these
+  formats.
+- **§17.9 Exercises**: format-conversion exercises (by hand, and COO->CSR
+  on the GPU via histogram+scan) and implementing the hybrid ELL-COO host
+  code / JDS kernel -- genuine reader exercises, not implemented here
+  (files 04/05 already implement the *described* hybrid/JDS mechanisms
+  directly from §17.5/§17.6's prose and figures, per the scope note above,
+  independently of these specific exercise phrasings).
+
 ## §17.2 SpMV/COO -- `01_spmv_coo.cu`
 
 The Coordinate (COO) format stores every non-zero as an independent
