@@ -157,6 +157,41 @@ At startup it queries `cudaGetDeviceProperties` on whatever device it
 actually runs on; if that device's compute capability is below 8.0, it
 prints a clear message and exits with status 0 instead of crashing.
 
+## Results (RTX 4090, `sm_89`, files 01-04 built for `-arch=sm_75`, file 05
+for `-arch=sm_80`; this environment's default CUDA device 0 is the 4090)
+
+```
+== bin/01_matmul_coarsened_larger_tiles ==
+M=1024  N=1024  K=1024  (BM=128 BN=128 BK=8, TM=8 TN=8):    0.160 ms  [match]
+== bin/02_matmul_register_tiled ==
+M=1024  N=1024  K=1024  (BM=128 BN=128 BK=8, TM=8 TN=8):    0.155 ms  [match]
+== bin/03_matmul_coalesced_output_store ==
+M=1024  N=1024  K=1024  (BM=128 BN=128 BK=8, quadrant=4x4):    0.162 ms  [match]
+== bin/04_matmul_bank_conflict_free ==
+M=1024  N=1024  K=1024  (BM=128 BN=128 BK=8, A_s lda=9):    0.123 ms  [match]
+== bin/05_matmul_software_pipelined ==
+M=1024 N=1024 K=1024 (BM=128 BN=128 BK=8, A_s lda=9, double-buffered async-copy)
+Software-pipelined (§15.8/§15.9) kernel time: 0.136 ms  [match]
+```
+(smaller/boundary test cases omitted here; see each file's own PASS output
+for the full set, including non-multiple-of-tile-size cases for 01-04.)
+
+Files 01→02 (register tiling) and 04 (bank-conflict-free padding) each show
+a clear, expected improvement; 03 (coalesced output store) measures
+essentially flat against 02 at this problem size — plausible since a
+`1024^3` matmul's output-store traffic is a small fraction of its total
+global-memory traffic, so a coalescing fix specific to the store phase has
+limited room to show up in the overall kernel time. File 05
+(software-pipelined) measures *slower* than file 04 alone (0.136 ms vs.
+0.123 ms) despite adding a strictly-more-overlapped memory/compute
+schedule on top of it — not a claim this README makes elsewhere, so
+nothing here is contradicted, but worth noting rather than silently
+omitting: at `M=N=K=1024`, the extra `cuda::pipeline` bookkeeping per
+tile-load plausibly outweighs the overlap benefit at this single problem
+size, the same kind of "real mechanism, not necessarily a net win at every
+size" result this project's Ch. 6/Ch. 13 samples report directly rather
+than assume away.
+
 Build and run all samples in this chapter:
 
 ```sh
