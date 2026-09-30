@@ -27,12 +27,16 @@
 // The convergent kernel (Fig. 10.8, i = threadIdx.x) has adjacent threads
 // always owning adjacent locations, so "the adjacent threads in each warp
 // always access adjacent locations in the global memory so the accesses
-// are always coalesced" -- §10.5 does not give a second worked total (it
-// only asserts coalescing qualitatively and that execution time "is likely
-// to be significantly better"), so this file does NOT fabricate a
-// competing request count for it; instead it reports the one number the
-// book actually derives (141, for N=256) and lets the timing comparison
-// speak to the real-hardware effect.
+// are always coalesced." §10.5 itself only asserts this qualitatively, but
+// §10.6 (opening its shared-memory-tiling argument) gives the matching
+// N=256 total directly: "the total number of global memory requests
+// triggered will be reduced from 36 for the kernel in Fig. 10.8 to 8+1=9
+// for the shared memory kernel" -- so the book does derive a second
+// number after all, just one section later, framed as the *before* half of
+// §10.6's own comparison rather than as part of §10.5's own worked
+// example. This file reproduces both book-given N=256 totals (141 and 36)
+// in `bookNaiveMemoryRequests256()`/`bookConvergentMemoryRequests256()`
+// and lets the timing comparison speak to the real-hardware effect on top.
 //
 // This file times BOTH kernels in the same process, so per this project's
 // timing-fairness rule, each gets its own untimed warm-up launch
@@ -114,6 +118,24 @@ static unsigned int bookNaiveMemoryRequests256() {
     return sum * 3u;  // = (40 + 7) * 3 = 141
 }
 
+// The convergent kernel's matching N=256 total, stated directly in §10.6
+// ("reduced from 36 for the kernel in Fig. 10.8"): every active warp issues
+// exactly 1 coalesced request per read/write regardless of how many of its
+// threads are still active, so each of the 8 iterations (stride 128 down
+// to 1) costs 3 requests per still-active warp; warps halve every
+// iteration down to iteration log2(blockDim/32)+1 and then stay at 1 for
+// the remaining iterations.
+static unsigned int bookConvergentMemoryRequests256() {
+    unsigned int blockDim = 256u / 2u;  // 128
+    unsigned int total = 0u;
+    for (unsigned int stride = blockDim; stride >= 1u; stride /= 2u) {
+        unsigned int activeThreads = stride < blockDim ? stride : blockDim;
+        unsigned int activeWarps = (activeThreads + 31u) / 32u;
+        total += activeWarps * 3u;
+    }
+    return total;  // = 36
+}
+
 // Runs one kernel on `input_h`, with its own untimed warm-up launch
 // immediately before its own timed launch (both re-upload pristine data
 // first, since both kernels mutate `input` in place). Returns the timed
@@ -164,9 +186,10 @@ bool runTestCase(unsigned int n) {
            okNaive ? "match" : "MISMATCH", convSum, convMs, okConv ? "match" : "MISMATCH");
 
     if (n == 256) {
-        printf("  Book's §10.5 worked example (Fig. 10.5, N=256): %u global memory requests"
-               " (uncoalesced) -- reproduced from the text's own arithmetic, not measured here.\n",
-               bookNaiveMemoryRequests256());
+        printf("  Book's own N=256 totals -- naive (§10.5, Fig. 10.5): %u global memory requests;"
+               " convergent (§10.6, Fig. 10.8): %u requests -- both reproduced from the text's"
+               " own arithmetic, not measured here.\n",
+               bookNaiveMemoryRequests256(), bookConvergentMemoryRequests256());
     }
 
     return okNaive && okConv;
