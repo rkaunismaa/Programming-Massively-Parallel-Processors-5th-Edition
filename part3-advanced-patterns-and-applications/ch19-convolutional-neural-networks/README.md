@@ -44,6 +44,30 @@ the chapter presents -- there is nothing in it to implement -- and no system
 CUDNN development package is installed in this environment, so no cuDNN
 sample is included here.
 
+## §19.1, §19.5-19.6 Notes not given a separate file
+
+- **§19.1 Convolutional neural networks**: introduces CNNs via LeNet-5
+  (Fig. 19.1, handwritten-digit recognition) and gives the sequential
+  reference C code both this chapter's files build on -- a single-sample
+  `convLayer_forward` (Fig. 19.3) and its batched generalization,
+  `convLayer_batched` (Fig. 19.4, one additional outer loop over the `N`
+  samples in a mini-batch) -- which is the version both `01` and `02`
+  actually implement on the GPU. The section also explicitly scopes the
+  whole chapter to the *forward* path only, even though it's discussing a
+  *training*-relevant computation: "the forward path is activated during
+  both the training phase and the inference phase. We will therefore use
+  the forward path to illustrate the acceleration" -- backward propagation
+  (training) is deferred to Appendix B, matching why Exercise 3 (implement
+  the backward pass) is out of scope here.
+- **§19.5 Summary / §19.6 Exercises**: recap, plus the numbered exercises
+  -- implementing a subsampling layer's forward pass and the convolutional
+  layer's backward pass (both deferred to Appendix B material, outside
+  this chapter's own scope), a layout-choice discussion question
+  (`[N*C*H*W]` vs. `[N*H*W*C]` vs. `[C*H*W*N]`, left open here as a genuine
+  design tradeoff rather than one with a single derivable answer), and the
+  Fig. 19.11 memory-access analysis, which *is* answered above rather than
+  left as an open exercise.
+
 ## §19.2 Direct convolutional-layer kernel -- `01_cnn_conv_layer_direct.cu`
 
 Each thread computes one output pixel `Y[n,m,h,w]`. Thread blocks are
@@ -77,6 +101,34 @@ never materializing `B` in global memory (Fig. 19.9/19.10/19.11). This file
 implements `ConvLayer_MM_Kernel` (Fig. 19.11) unchanged, including its
 stated assumption that `M` and `H_out*W_out` divide evenly by `TILE_WIDTH`
 (no bounds checking, per the book).
+
+**Exercise 4's analysis, worked out.** §19.6 Exercise 4 asks the reader to
+analyze Fig. 19.11's memory access pattern for coalescing and bank
+conflicts, without a kernel to write -- answered here rather than left
+open, and checked numerically (not just asserted) before writing it down:
+
+- **Global memory (the `Bds` load, line 28).** `TILE_WIDTH=16` means
+  `blockDim.x=16 < 32`, so one warp spans **two** `ty` values (`ty=0` for
+  lanes 0-15, `ty=1` for lanes 16-31 -- CUDA linearizes `threadIdx.y` above
+  `threadIdx.x`). Within either half-warp, `ty` (and hence `u =
+  ph*TILE_WIDTH+ty`) is fixed and only `v = Col` varies by 1 per lane, so
+  Eq. (19.5)'s index increases by exactly 1 per lane -- coalesced --
+  *unless* the 16 consecutive `v` values straddle an output-row boundary
+  (`v` crossing a multiple of `W_out`), which can split one half-warp's
+  access into two separate contiguous runs instead of one (a small
+  discontinuity, not a scattered access). The two half-warps themselves
+  read from different, usually nearby, `u`-based regions of `X`. Net: good
+  coalescing overall, but not the single trivially-provable transaction a
+  simple row-major read would give -- exactly the nuance the exercise is
+  testing for.
+- **Shared memory.** The `Bds[k][tx]` read in the accumulation loop is the
+  standard tiled-matmul pattern (fixed `k`, `tx` fast-varying -> consecutive
+  banks): conflict-free. The `Fds[ty][k]` read is a broadcast within each
+  `ty`-group (16 lanes share one address), and the two groups' addresses
+  (`ty*TILE_WIDTH+k` for `ty` in `{0,1}`) are always exactly 16 apart, hence
+  always in *different* banks for every `k` (verified by brute force over
+  `k=0..15`, not just argued) -- both groups broadcast simultaneously with
+  no conflict. **Conclusion: no bank conflicts anywhere in this kernel.**
 
 ## Results
 
