@@ -8,6 +8,8 @@ Source: *Programming Massively Parallel Processors*, 5th ed., Ch. 9 (pp. 201-220
 | `02_histogram_privatized_shared_mem.cu` | §9.4 | Privatized kernel (Fig. 9.10): each block gets a private histogram in shared memory, block-scope atomics during the pass, device-scope atomics to merge into the public histogram at the end |
 | `03_histogram_coarsened.cu` | §9.5 | Coarsened kernel (Fig. 9.14): builds on file 02, adds thread coarsening with **interleaved** partitioning (the strategy the book recommends for GPUs, over contiguous partitioning) so fewer private copies need to be initialized/merged |
 | `04_histogram_thread_level_privatization.cu` | §9.6 | Thread-level-privatized kernel (Fig. 9.15): builds on file 03, each thread tracks a single most-recently-seen bin in a register and only commits to shared memory when the run of identical pixels ends |
+| `05_histogram_privatization_global_vs_shared.cu` | §9.4 | Head-to-head: global-memory-private-copy kernel (Fig. 9.9) vs shared-memory-private-copy kernel (Fig. 9.10) — the book's own before/after pair, neither of which was previously measured against the other |
+| `06_histogram_contiguous_vs_interleaved.cu` | §9.5 | Head-to-head: contiguous-partitioning kernel (Fig. 9.12) vs interleaved-partitioning kernel (Fig. 9.14) — the book's own coalescing argument, measured directly |
 
 All four files histogram the **pixel intensities of a synthetic grayscale
 image** (`unsigned char`, 256 possible values, one bin per value), matching
@@ -121,6 +123,59 @@ Measured: 12 registers/thread (up from file 03's 11 — `currVal` and `accum`
 are the added thread-private state), 1024 bytes shared memory per block
 (unchanged — the block-level privatized histogram itself is identical to
 files 02/03; only the per-thread pixel-processing loop changed).
+
+## §9.4 Global vs. shared privatization, head-to-head — `05_histogram_privatization_global_vs_shared.cu`
+
+§9.4 presents privatization as two complete kernel listings, not one: Fig.
+9.9 gives each block a private histogram allocated from a global-memory
+pool (`bins_pool`, `gridDim.x * NUM_BINS` elements, zeroed by the host
+before each launch — the figure shows only the kernel, and zeroing a
+global buffer between calls is the host's responsibility, not shown in
+the listing), reducing contention from device-wide to per-block; Fig.
+9.10 then moves that same private copy into `__shared__` memory, arguing
+its "very short access latency (a few cycles)... directly translates into
+[a] dramatic increase in the throughput of atomic operations." File 02
+already implements Fig. 9.10, but Fig. 9.9 was never given its own
+sample, so the book's own before/after argument was never actually
+measured against itself. This file implements both (duplicating file 02's
+kernel here for a same-binary comparison) — identical structure, differing
+only in where `bins_priv` lives and how it's initialized.
+
+At 1920x1080 on this repo's GPU: global-memory privatization (Fig. 9.9)
+~0.083 ms vs. shared-memory privatization (Fig. 9.10) ~0.052 ms (~1.6x) —
+a clear, reproducible gap confirming the book's claim, smaller than a
+naive "hundreds of cycles vs. a few cycles" ratio would suggest because
+the global-memory private copies are themselves heavily reused within a
+block's lifetime and served from L1/L2 rather than DRAM for most
+accesses, but the latency gap is still real and visible.
+
+## §9.5 Contiguous vs. interleaved partitioning, head-to-head — `06_histogram_contiguous_vs_interleaved.cu`
+
+§9.5 likewise gives two complete kernel listings for coarsening: Fig.
+9.12 (contiguous partitioning) and Fig. 9.14 (interleaved partitioning),
+with an explicit preference stated in prose — contiguous "results in a
+sub-optimal memory access pattern" on a GPU, which "motivates interleaved
+partitioning." File 03 already implements Fig. 9.14; Fig. 9.12 was never
+implemented, so this specific coalescing claim was never actually
+measured. This file implements both (duplicating file 03's kernel here),
+differing only in one line — the per-iteration pixel index arithmetic.
+
+Measured result is a genuine surprise worth reporting honestly rather
+than hiding: at 1920x1080 on this repo's GPU, contiguous (Fig. 9.12)
+~0.022 ms and interleaved (Fig. 9.14) ~0.023 ms — no measurable
+difference, contradicting the book's stated preference at this specific
+data width and coarsening factor. The reason is arithmetic: histogram
+pixels are single bytes, and `COARSE_FACTOR = 4` means a 32-thread warp's
+*entire* footprint for one loop iteration spans only 32 x 4 = 128 bytes
+under contiguous partitioning (vs. 32 bytes under interleaved) — both
+comfortably inside a single 128 B L2 sector, so the classic
+many-separate-transactions coalescing penalty (the one that dominates
+this repo's other coalescing demos, which use 4 B floats/ints with much
+larger per-warp spans) simply doesn't arise at this element size and
+coarsening factor. The *mechanism* the book describes is real — a bigger
+`COARSE_FACTOR` or a wider element type would eventually widen a warp's
+span past one cache line and reproduce the effect — it's just not what
+this specific combination measures.
 
 ## §9.3, §9.7-9.8 Notes not given a separate file
 
