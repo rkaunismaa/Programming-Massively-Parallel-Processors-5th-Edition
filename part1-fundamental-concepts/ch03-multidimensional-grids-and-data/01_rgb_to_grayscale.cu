@@ -78,6 +78,15 @@ float runGrayscale(const unsigned char *Pin_h, unsigned char *Pout_h, int width,
     dim3 dimBlock(16, 16, 1);
     dim3 dimGrid((width + 15) / 16, (height + 15) / 16, 1);
 
+    // Warm-up launch (result discarded): on a fresh build (or after clearing
+    // ~/.nv/ComputeCache), the driver may need to JIT-compile the embedded
+    // PTX into SASS the first time this kernel is touched -- a one-time cost
+    // that has nothing to do with the kernel itself but would otherwise
+    // dominate the single timed launch below.
+    colorToGrayscaleConversion<<<dimGrid, dimBlock>>>(Pin_d, Pout_d, width, height);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
     GpuTimer timer;
     timer.start();
     colorToGrayscaleConversion<<<dimGrid, dimBlock>>>(Pin_d, Pout_d, width, height);

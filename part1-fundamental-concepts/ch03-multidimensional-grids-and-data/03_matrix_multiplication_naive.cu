@@ -67,6 +67,13 @@ float runMatmul(const float *M_h, const float *N_h, float *P_h, int Width) {
     dim3 dimBlock(16, 16, 1);
     dim3 dimGrid((Width + 15) / 16, (Width + 15) / 16, 1);
 
+    // Warm-up launch (result discarded): absorbs the one-time PTX->SASS JIT
+    // cost the driver may pay the first time this kernel is touched on a
+    // fresh build, so it doesn't leak into the single timed launch below.
+    matrixMulKernel<<<dimGrid, dimBlock>>>(M_d, N_d, P_d, Width);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
     GpuTimer timer;
     timer.start();
     matrixMulKernel<<<dimGrid, dimBlock>>>(M_d, N_d, P_d, Width);
