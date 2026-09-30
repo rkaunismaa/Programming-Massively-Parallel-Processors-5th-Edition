@@ -127,21 +127,23 @@ accumulated `D_i`/`O_i` need the `e^(m_r,A - m_r,A∪B)` rescale before the
 new terms are added in -- `updateMAndD()` rescales `D_i`, `computeO()`
 rescales `O_i`, matching Figs. 20.14 and 20.13 respectively.
 
-**A note on a probable OCR artifact in the extracted chapter text.** The
-prose describing `update_m_and_D()` (Fig. 20.14) states that its line 6
-"computes the term `D_r,B * e^(m_r,B - m_r,A∪B)`" -- but at that point `D_i`
-still holds only the old `D_r,A`; the new tile's contribution `D_r,B` isn't
-summed until `compute_P_and_update_D()` runs afterwards, and
-`update_m_and_D()` has no access to a not-yet-computed `D_r,B`. The only
-interpretation consistent with the code's actual data flow -- and the one
-implemented here -- is that this line rescales the *old* term, i.e.
-computes `D_i = D_r,A * e^(m_r,A - m_r,A∪B)`, the first addend of Eq.
-(20.4)/(20.6); `compute_P_and_update_D()` then computes the `D_r,B` term
-directly against the merged max and adds it, completing the composition
-rule with no separate rescale needed for that term. This reads as a
-subscript transcription slip (A vs. B) in the source PDF's math rendering,
-not a deviation this file takes from the book -- the implementation follows
-Eq. (20.4)/(20.6) exactly, and is verified correct against the naive
+**A confirmed error in the book's own text** (verified directly against the
+rendered page image, not a `pdftotext`/OCR extraction -- this isn't an
+artifact of how the text was pulled from the PDF, the published page itself
+reads this way). The prose describing `update_m_and_D()` (Fig. 20.14)
+states that its line 6 "computes the term `D_r,B * e^(m_r,B - m_r,A∪B)`" --
+but at that point `D_i` still holds only the old `D_r,A`; the new tile's
+contribution `D_r,B` isn't summed until `compute_P_and_update_D()` runs
+afterwards, and `update_m_and_D()` has no access to a not-yet-computed
+`D_r,B`. The only interpretation consistent with the code's actual data
+flow -- and the one implemented here -- is that this line rescales the
+*old* term, i.e. computes `D_i = D_r,A * e^(m_r,A - m_r,A∪B)`, the first
+addend of Eq. (20.4)/(20.6); `compute_P_and_update_D()` then computes the
+`D_r,B` term directly against the merged max and adds it, completing the
+composition rule with no separate rescale needed for that term. This is a
+subscript transcription slip (A vs. B) in the published book text, not a
+deviation this file takes from the book -- the implementation follows Eq.
+(20.4)/(20.6) exactly, and is verified correct against the naive
 double-precision reference.
 
 **Other fidelity notes.** `KT_j` is padded in shared memory
@@ -156,6 +158,28 @@ value there) -- required because independent thread scheduling (Volta+)
 does not guarantee same-warp shared-memory writes are visible without an
 explicit reconvergence point; `compute-sanitizer --tool racecheck` flagged
 this exact hazard without it and is clean with it.
+
+**§20.9 Exercises 3 and 4, answered.** Exercise 3 asks the reader to write
+line 21's `initialize()` device function and explain why `O_i` and `D_i`
+need to start at `0.f`. This file already implements it (`initialize()`,
+above) -- but the exercise's own phrasing undersells one detail worth
+stating explicitly: `m_i` (the running row maximum) must start at
+`-INFINITY`, *not* `0.f` -- the composition rule's `max(m_r,A, m_r,B)` only
+produces the correct merged maximum if the very first tile's real max is
+guaranteed to win that comparison, which starting `m_i` at `0` would break
+for any row whose true maximum is negative (entirely possible for raw
+attention logits before the causal mask). `O_i`/`D_i` starting at `0.f` is
+the simpler case: both are pure running sums (of rescaled output
+contributions and of `e^{l_{r,j}-m_r}` terms respectively), and a sum with
+no terms yet accumulated is `0` by definition.
+
+Exercise 4 asks the reader to show that `load_KT_and_V`'s (Fig. 20.11)
+loads of `K`/`V` are coalesced. This one's straightforward: for a fixed
+`jj` (outer loop), consecutive `threadIdx.x` values are consecutive `dd`
+values in the first stride pass, and both `K[(B_c*j+jj)*d+dd]` and
+`V[(B_c*j+jj)*d+dd]` increment their global index by exactly 1 per `dd` --
+both are plain, fully coalesced row reads, unlike Ch. 19 Fig. 19.11's
+substantially more involved `B`-tile mapping.
 
 ## §20.7: memory-alleviation techniques (no separate sample)
 
