@@ -107,6 +107,48 @@ allocation. No updated kernel/device-function code with padded indexing
 throughout is printed for it (unlike Figs. 16.15-16.19, which are complete
 listings), so per this project's scope rule it is not implemented.
 
+## §16.1-16.3, §16.8-16.10 Notes not given a separate file
+
+- **§16.1 Dynamic programming**: problems with *optimal substructure* and
+  *overlapping sub-problems* (unlike divide-and-conquer, e.g. Ch. 14's
+  merge sort, whose sub-problems don't overlap) can be solved by solving
+  and caching (*memoizing*, or *tabulating*) smaller sub-problems first.
+  The Fibonacci recurrence is the chapter's running toy example.
+- **§16.2 Implementation approaches**: *top-down* (recursive +
+  memoization into a hash table) vs. *bottom-up* (iterative, filling a
+  table from the smallest sub-problems up). Top-down is a poor GPU fit for
+  two reasons named directly: CUDA kernels can't efficiently support deep
+  recursive call nesting, and hash-table accesses are typically
+  uncoalesced across a warp. This chapter -- and every sample here --
+  "focus[es] on bottom-up approaches," matching the book's own stated
+  scope.
+- **§16.3 Wavefront patterns**: the set of table cells solvable in
+  parallel at once is a *wavefront*; Fig. 16.2 gives four examples
+  (checkerboard, financial, Smith-Waterman, H.264), split into
+  constant-size wavefronts (Floyd-Warshall's category, file 01) vs.
+  grow-then-shrink wavefronts (Smith-Waterman's category, files 02-04).
+  Separately, whether the *entire* table must be retained varies:
+  Fibonacci only needs the last two values, Floyd-Warshall only the
+  current 2D plane of its 3D problem space, but Smith-Waterman needs every
+  wavefront kept for the (sequential, not parallelized here) traceback
+  step.
+- **§16.8 More optimizations**: two further techniques are *described*,
+  not given complete code for, and each maps directly onto this chapter's
+  own listed exercises (4-6) rather than a worked figure -- consistent
+  with why they're excluded per this project's scope rule (see above):
+  inter-block synchronization via a flag array (resembling Ch. 11's
+  single-lookback scan, illustrated only by a diagram, Fig. 16.21, with no
+  pseudocode or index arithmetic given), and DPX instructions
+  (`__vimax3_s32_relu()` as a drop-in replacement for `max4()`) -- which
+  additionally require Hopper (compute capability >= 9.0), hardware
+  neither GPU in this environment has, so even a "graceful skip" sample
+  could never be verified here the way `ch06`/`ch15`'s `sm_80` samples
+  are.
+- **§16.9-16.10 Summary/Exercises**: recap and the numbered exercises
+  (square-tiled Floyd-Warshall, rectangular tiles, cooperative-groups
+  sync, unidirectional sync for square and hyper tiles, DPX) -- genuine
+  reader exercises, not implemented here.
+
 ## Results
 
 ```
