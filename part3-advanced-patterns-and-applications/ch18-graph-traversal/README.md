@@ -9,6 +9,7 @@ Source: *Programming Massively Parallel Processors*, 5th ed., Ch. 18 (pp. 425-45
 | `03_bfs_frontier_based.cu` | §18.5 | Work-efficient vertex-centric push BFS with explicit frontiers and atomic compare-and-swap labeling (Figs. 18.12, 18.14) |
 | `04_bfs_frontier_privatized.cu` | §18.6 | Frontier-based BFS with block-local (shared-memory) private frontiers to reduce atomic contention (Fig. 18.15) |
 | `05_bfs_cooperative_groups.cu` | §18.7 | Single-launch, multi-level BFS using cooperative-groups grid-wide barrier sync (Fig. 18.17) |
+| `06_bfs_vertex_centric_pull.cu` | §18.3 | Vertex-centric pull (bottom-up) BFS (Fig. 18.8), head-to-head against file 01's push kernel on identical test graphs |
 
 All five files implement breadth-first search (BFS): each builds a small
 synthetic directed graph in CSR (or, for file 02, COO) form, computes a CPU
@@ -51,9 +52,8 @@ vertices. Work is O(d*n + m) (§18.5): every vertex is re-checked at every
 level.
 
 *(§18.3 also covers a vertex-centric* pull *(bottom-up) kernel over
-incoming/CSC edges, Fig. 18.8 -- the task brief scopes this chapter's file
-01 to the* push *variant specifically, so the pull kernel is not
-implemented here.)*
+incoming/CSC edges, Fig. 18.8 -- see file 06 below, which implements it and
+measures it directly against this file's push kernel.)*
 
 ## §18.4 Edge-centric -- `02_bfs_edge_centric.cu`
 
@@ -167,6 +167,38 @@ adding `-G`: reproduces the hang; `-O2`: runs correctly), so the `Makefile`
 builds this one file without `-G` even when `DEBUG=1` (still `-O0 -g` for
 host-side debuggability), leaving the other four files unaffected.
 
+## §18.3 Push vs. pull, head-to-head -- `06_bfs_vertex_centric_pull.cu`
+
+§18.3 gives two complete kernel listings for vertex-centric BFS -- push
+(Fig. 18.6, file 01) and pull (Fig. 18.8) -- with an explicit qualitative
+tradeoff: push only launches real work for previous-level vertices and
+always walks every one of its vertex's edges, while pull launches a thread
+for every still-unvisited vertex regardless of level but can `break` out of
+its edge list the instant it finds a previous-level neighbor. The book's
+own conclusion is that neither wins unconditionally -- push tends to win at
+early levels (few previous-level vertices, most of the graph still
+unvisited), pull at later levels (most vertices visited, an unvisited
+vertex's neighbors more likely to already be labeled) -- which motivates
+the *direction-optimized* hybrid mentioned at the end of §18.3. Only the
+push kernel had been implemented anywhere in this chapter, so this
+comparison was never actually measured; this file implements the pull
+kernel (needing a CSC build of the same edge list, for incoming-edge
+accessibility) and times both kernels head-to-head on file 01's identical
+test graphs (each with its own untimed warm-up immediately before its own
+timed run, per this project's timing-fairness rule).
+
+Not implemented: the direction-optimized hybrid itself, since switching
+*when* to change strategy needs a heuristic no figure in this chapter
+gives -- only described in one closing paragraph, unlike the fully worked
+Figs. 18.6/18.8 this file does implement.
+
+On this repo's GPU, pull measures modestly faster than push on both test
+graphs (small graph: 0.053 ms vs. 0.055 ms; random 4000-vertex graph:
+0.113 ms vs. 0.139 ms) -- a whole-traversal number, not a per-level one, so
+it doesn't contradict §18.3's per-level argument: a single random graph's
+levels can easily skew toward whichever regime (many labeled neighbors,
+i.e. pull-favorable) dominates its particular level-size distribution.
+
 ## Results
 
 ```
@@ -195,9 +227,14 @@ BFS: single-launch multi-level kernel with cooperative-groups grid sync (§18.7,
 small graph (root=0) (V=13, E=17): 0.0554 ms  [match]
 random 4000-vertex graph (V=4000, E=25592): 0.1475 ms  [match]
 PASS
+== bin/06_bfs_vertex_centric_pull ==
+BFS: vertex-centric push (Fig. 18.6) vs pull (Fig. 18.8), head-to-head (§18.3):
+small graph (root=0) (V=13, E=17): push 0.0537 ms [match]  |  pull 0.0526 ms [match]
+random 4000-vertex graph (V=4000, E=25592): push 0.1298 ms [match]  |  pull 0.1133 ms [match]
+PASS
 ```
 
-All five binaries also pass under `compute-sanitizer --tool memcheck` (0
+All six binaries also pass under `compute-sanitizer --tool memcheck` (0
 errors) at `-arch=sm_75` -- notable here since files 03, 04, and 05 rely on
 `cuda::atomic_ref::compare_exchange_strong` and `atomicAdd` for frontier
 construction, and file 05 additionally performs a grid-wide cooperative
