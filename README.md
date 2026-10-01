@@ -23,6 +23,8 @@ mirror the book's own structure.
 - `part3-advanced-patterns-and-applications/` — Ch 16–23
 - `common/cuda_utils.h` — shared error-checking, timing, and
   float-comparison helpers used by every sample
+- Every chapter directory also has a `summary.md` — see
+  [Chapter summaries](#chapter-summaries) below.
 
 ## Chapter index
 
@@ -50,6 +52,19 @@ mirror the book's own structure.
 | 21 | `part3-advanced-patterns-and-applications/ch21-electrostatic-potential-map` | Electrostatic potential map |
 | 22 | `part3-advanced-patterns-and-applications/ch22-algorithm-selection-and-problem-decomposition` | Algorithm selection, problem decomposition |
 | 23 | `part3-advanced-patterns-and-applications/ch23-multi-gpu-programming` | Multi-GPU programming (MPI/NCCL/NVSHMEM) |
+
+## Chapter summaries
+
+Every chapter directory (`ch02-...` through `ch23-...`) has a
+`summary.md` giving a section-by-section summary of that chapter's
+actual book content (e.g. `ch07-convolution/summary.md` covers
+§7.1–7.8) — concepts, figures, formulas, and worked examples, written
+from a direct re-read of the book rather than from the chapter's own
+code/README. It's independent of each chapter's own `README.md`, which
+instead documents the *samples* (what's implemented, scope notes,
+measured results). Read a chapter's `summary.md` for a refresher on
+the book material itself; read its `README.md` for what this repo
+built from it.
 
 ## Build & run
 
